@@ -1,0 +1,48 @@
+{
+	"pages": [ //pages数组中第一项表示应用启动页，参考：https://uniapp.dcloud.io/collocation/pages
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "陈皮票根",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/users/center/center",
+			"style": {
+				"navigationBarTitleText": "会员中心",
+				"navigationBarBackgroundColor": "#1e3a8a",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/users/profile/profile",
+			"style": {
+				"navigationBarTitleText": "个人资料",
+				"navigationBarBackgroundColor": "#1e3a8a",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+		  "path": "pages/shop/shopapply/shop-apply",
+		  "style": {
+		    "navigationBarTitleText": "入驻申请",
+		    "navigationBarBackgroundColor": "#1e3a8a",
+		    "navigationBarTextStyle": "white"
+		  }
+		},
+		{
+		  "path": "pages/shop/shopinfo/shopinfo",
+		  "style": {
+		    "navigationBarTitleText": "资料管理"
+		  }
+		}
+	],
+	"globalStyle": {
+		"navigationBarTextStyle": "black",
+		"navigationBarTitleText": "陈皮票根",
+		"navigationBarBackgroundColor": "#F8F8F8",
+		"backgroundColor": "#F8F8F8"
+	},
+	"uniIdRouter": {}
+}
