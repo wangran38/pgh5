@@ -42,18 +42,15 @@ const loading = ref(false)
 
 // 页面加载时获取真实用户信息
 onMounted(async () => {
-  try {
-    const res = await getUserProfile()
-    if (res.error_code === 0 && res.data) {
-      form.value = {
-        nickname: res.data.nickname || res.data.name || '',
-        mobile: res.data.mobile || '',
-        level: res.data.level || 0,
-        avatar: res.data.avatar || ''
-      }
+  const res = await getUserProfile()
+  if (res && res.data) {
+    form.value = {
+      nickname: res.data.nickname || res.data.name || '',
+      mobile: res.data.mobile || '',
+      level: res.data.level || 0,
+      avatar: res.data.avatar || ''
     }
-  } catch (error) {
-    console.error('获取个人资料失败:', error)
+  } else {
     uni.showToast({ title: '加载个人资料失败', icon: 'none' })
   }
 })

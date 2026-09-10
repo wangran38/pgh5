@@ -75,52 +75,57 @@
 			<view v-else class="empty-state">暂无分类数据</view>
 		</view>
 
-		<!-- 商家推荐列表 Heading -->
-		<view class="list-heading">
-			<view class="title-wrap">
-				<text class="dot"></text>
-				<text class="title">
-					{{ recognizedStore ? `已匹配: ${recognizedStore}` : (activeCategory ? `专区 · ${getCategoryName(activeCategory)}` : `${currentLocation} · 热门票根优惠店`) }}
-				</text>
-			</view>
-			<text class="sub-tip">凭票根到店即享</text>
-		</view>
-
-		<!-- 商家推荐列表 -->
-		<view v-if="!shopList || shopList.length === 0" class="empty-state">该分类下暂无商家</view>
-
-		<view v-else v-for="shop in shopList" :key="shop.id" class="shop-card" @click="openShopDetail(shop)">
-			<view class="shop-cover"
-				:style="{ background: shop.themeColor || 'linear-gradient(135deg, #2563eb, #1d4ed8)' }">
-				<text class="cover-badge">票根可叠</text>
-				<text class="cover-title">{{ shop.short_name || '特惠商家' }}</text>
-			</view>
-
-			<view class="shop-body">
-				<view class="shop-header">
-					<text class="shop-name">{{ shop.name || '精选商户' }}</text>
-					<text class="shop-dist" v-if="shop.distance">{{ shop.distance }}</text>
-				</view>
-
-				<!-- 亮眼票根优惠标签 -->
-				<view class="benefit-box" v-if="shop.discount_tag || shop.discount">
-					<text class="benefit-label">票根立减</text>
-					<text
-						class="benefit-val">{{ shop.discount_tag ? `${shop.discount_tag} (${shop.discount})` : shop.discount }}</text>
-				</view>
-
-				<view class="shop-footer">
-					<text class="category-tag">{{ shop.category_name || '综合特惠' }}</text>
-					<text class="price-wrap" v-if="shop.price">
-						<text class="symbol">￥</text>
-						<text class="amount">{{ shop.price }}</text>
-						<text class="unit">起</text>
+		<!-- 商家列表区：独立滚动 + 下拉刷新（内容排满容器才允许滚动） -->
+		<scroll-view class="list-scroll" scroll-y refresher-enabled
+			:refresher-triggered="listRefreshing" refresher-default-style="black" @refresherrefresh="onListRefresh">
+			<!-- 商家推荐列表 Heading -->
+			<view class="list-heading">
+				<view class="title-wrap">
+					<text class="dot"></text>
+					<text class="title">
+						{{ recognizedStore ? `已匹配: ${recognizedStore}` : (activeCategory ? `专区 · ${getCategoryName(activeCategory)}` : `${currentLocation} · 热门票根优惠店`) }}
 					</text>
 				</view>
+				<text class="sub-tip">凭票根到店即享</text>
 			</view>
-		</view>
 
-		<view class="bottom-padding"></view>
+			<!-- 商家推荐列表 -->
+			<view v-if="loadingShops" class="loading-state">商家加载中...</view>
+			<view v-else-if="!shopList || shopList.length === 0" class="empty-state">该分类下暂无商家</view>
+
+			<view v-else v-for="shop in shopList" :key="shop.id" class="shop-card" @click="openShopDetail(shop)">
+				<view class="shop-cover"
+					:style="{ background: shop.themeColor || 'linear-gradient(135deg, #2563eb, #1d4ed8)' }">
+					<image v-if="shop.logo" class="cover-img" :src="firstImage(shop.logo)" mode="aspectFill" />
+					<text class="cover-badge">{{ shop.status === 1 ? '营业中' : '休息中' }}</text>
+					<text class="cover-title">{{ shop.name || '特惠商家' }}</text>
+				</view>
+
+				<view class="shop-body">
+					<view class="shop-header">
+						<text class="shop-name">{{ shop.name || '精选商户' }}</text>
+						<text class="shop-dist" v-if="shop.distance_km != null && shop.distance_km !== ''">{{ formatDistance(shop.distance_km) }}</text>
+					</view>
+
+					<!-- 亮眼票根优惠标签 -->
+					<view class="benefit-box" v-if="shop.discounts">
+						<text class="benefit-label">票根立减</text>
+						<text class="benefit-val">{{ shop.discounts }}</text>
+					</view>
+
+					<view class="shop-footer">
+						<text class="category-tag">{{ shop.address || '综合特惠' }}</text>
+						<text class="price-wrap" v-if="shop.avg_cost > 0">
+							<text class="symbol">￥</text>
+							<text class="amount">{{ shop.avg_cost }}</text>
+							<text class="unit">人均</text>
+						</text>
+					</view>
+				</view>
+			</view>
+
+			<view class="bottom-padding"></view>
+		</scroll-view>
 
 		<!-- 三级联动城市选择弹窗 -->
 		<view v-if="cityPickerVisible" class="modal-mask" @click="closeCityPicker">
@@ -220,21 +225,53 @@
 							<text class="panel-close" @click="closeDialog">✕</text>
 						</view>
 
-						<!-- 使用 scroll-view 包裹 message，支持上下滚动查看完整 JSON 且不会撑破弹窗 -->
-						<scroll-view scroll-y class="dialog-scroll-box">
-							<text class="dialog-sub">{{ uploadDialog.message }}</text>
+						<!-- 识别中 -->
+						<view v-if="uploadDialog.loading" class="ticket-loading">
+							<view class="loading-spinner"></view>
+							<text class="loading-text">{{ uploadDialog.message }}</text>
+						</view>
+
+						<!-- 识别结果：结构化回显 -->
+						<scroll-view v-else scroll-y class="dialog-scroll-box">
+							<!-- 核验结果徽标 -->
+							<view class="verify-badge" :class="uploadDialog.isValid ? 'ok' : 'bad'">
+								{{ uploadDialog.isValid ? '✓ 票根核验通过' : '✗ 票根核验未通过' }}
+							</view>
+
+							<!-- 未通过原因 -->
+							<view v-if="!uploadDialog.isValid && uploadDialog.message" class="reject-reason">
+								<text class="reject-text">{{ uploadDialog.message }}</text>
+							</view>
+
+							<!-- 票根图片 -->
+							 <view class="ticket-img-container">
+							<image v-if="uploadDialog.imageUrl" :src="uploadDialog.imageUrl"
+								class="ticket-img" @click="previewTicketImage" /></view>
+							<!-- 票据信息明细 -->
+							<view v-if="uploadDialog.infoRows.length" class="ticket-info-list">
+								<view v-for="(row, idx) in uploadDialog.infoRows" :key="idx" class="ticket-info-row">
+									<text class="ticket-info-label">{{ row.label }}</text>
+									<text class="ticket-info-value">{{ row.value }}</text>
+								</view>
+							</view>
 						</scroll-view>
 
 						<view v-if="recognizedStore" class="match-box">
 							<text class="match-head">✨ 票根识别匹配成功</text>
 							<text class="match-name">{{ recognizedStore }}</text>
 							<text class="match-info" v-if="uploadDialog.ticketInfo">
-								类型: {{ uploadDialog.ticketInfo.type }} | 优惠: {{ uploadDialog.ticketInfo.discount }}
+								标题: {{ uploadDialog.ticketInfo.type }} | 优惠: {{ uploadDialog.ticketInfo.discount }}
 							</text>
 							<text class="match-info" v-else>已为你调出专属票根打折券！</text>
 						</view>
 
-						<button class="confirm-btn" @click="closeDialog">使用票根优惠</button>
+						<view v-if="uploadDialog.isValid" class="dialog-btns">
+							<button class="confirm-btn" @click="closeDialog">使用票根优惠</button>
+						</view>
+						<view v-else class="dialog-btns">
+							<button class="manual-btn" @click="contactSupport">人工审核</button>
+							<button class="confirm-btn" @click="closeDialog">知道了</button>
+						</view>
 					</view>
 				</view>
 	</view>
@@ -247,7 +284,8 @@
 		onMounted
 	} from 'vue'
 	import {
-		getShopCategories
+		getShopCategories,
+		getShopList
 	} from '@/api/shop.js'
 	import {
 		getCitiesByPid
@@ -260,9 +298,17 @@
 	import {
 		uploadAndVerifyTicket
 	} from '@/api/ticket.js' // 引入 api/ticket.js 中封装好的票根上传与核验接口
+	import {
+		getCurrentRegion,
+		getGpsPosition
+	} from '@/utils/location.js' // GPS 定位 + 高德逆地理编码
+	import {
+		compressImage
+	} from '@/utils/compressImage.js' // 上传前图片压缩
 
 	// 1. 基础状态
-	const currentLocation = ref('赣州')
+	// 从本地缓存恢复上次定位/选择的城市，避免刷新后退回默认"赣州"
+	const currentLocation = ref(uni.getStorageSync('city_name') || '赣州')
 	const activeCategory = ref(null)
 	const categoryList = ref([])
 	const recognizedStore = ref('')
@@ -315,38 +361,25 @@
 			return
 		}
 
-		try {
-			const res = await sendSms({
-				mobile: loginForm.value.mobile
-			})
-			if (res.code === 200) {
-				uni.showToast({
-					title: res.msg || '发送成功',
-					icon: 'success'
-				})
+		const res = await sendSms({
+			mobile: loginForm.value.mobile
+		})
+		if (!res) return // 失败已由 request.js 统一提示
 
-				isCounting.value = true
-				countdown.value = 60
-				timer = setInterval(() => {
-					countdown.value--
-					if (countdown.value <= 0) {
-						clearInterval(timer)
-						isCounting.value = false
-					}
-				}, 1000)
-			} else {
-				uni.showToast({
-					title: res.msg || '发送失败',
-					icon: 'none'
-				})
+		uni.showToast({
+			title: '验证码已发送',
+			icon: 'success'
+		})
+
+		isCounting.value = true
+		countdown.value = 60
+		timer = setInterval(() => {
+			countdown.value--
+			if (countdown.value <= 0) {
+				clearInterval(timer)
+				isCounting.value = false
 			}
-		} catch (error) {
-			console.error('❌ 发送验证码异常:', error)
-			uni.showToast({
-				title: '网络异常，请稍后重试',
-				icon: 'none'
-			})
-		}
+		}, 1000)
 	}
 
 	// 手机号验证码登录提交
@@ -367,59 +400,43 @@
 		}
 
 		loginLoading.value = true
-		try {
-			const res = await quickLogin({
-				mobile: loginForm.value.mobile,
-				code: loginForm.value.code
-			})
+		const res = await quickLogin({
+			mobile: loginForm.value.mobile,
+			code: loginForm.value.code
+		})
+		loginLoading.value = false
+		if (!res) return // 失败已由 request.js 统一提示
 
-			if (res.code === 200) {
-				const data = res.data
-				uni.setStorageSync('pgtoken', data.token)
+		const {
+			data
+		} = res
+		uni.setStorageSync('pgtoken', data.token)
 
-				isLoggedIn.value = true
-				userInfo.value = {
-					user_id: data.user_id,
-					mobile: loginForm.value.mobile,
-					nickname: data.name,
-					level: 0,
-					avatar: ''
-				}
-
-				loginModalVisible.value = false
-				uni.showToast({
-					title: '登录成功',
-					icon: 'success'
-				})
-
-				fetchProfileData()
-			} else {
-				uni.showToast({
-					title: res.msg || '登录失败',
-					icon: 'none'
-				})
-			}
-		} catch (error) {
-			console.error('❌ 登录异常:', error)
-			uni.showToast({
-				title: '网络异常，请稍后重试',
-				icon: 'none'
-			})
-		} finally {
-			loginLoading.value = false
+		isLoggedIn.value = true
+		userInfo.value = {
+			user_id: data.user_id,
+			mobile: loginForm.value.mobile,
+			nickname: data.nickname,
+			level: 0,
+			avatar: ''
 		}
+
+		loginModalVisible.value = false
+		uni.showToast({
+			title: '登录成功',
+			icon: 'success'
+		})
+
+		fetchProfileData()
+		ensureLocateCity() // GPS 定位所在城市（进入页面/登录成功都会触发，会话内仅一次）
 	}
 
-	// 获取会员个人信息接口封装调用
+	// 获取会员个人信息接口封装调用（探测登录态，静默失败）
 	async function fetchProfileData() {
-		try {
-			const res = await getUserProfile()
-			if (res.error_code === 0 && res.data) {
-				userInfo.value = res.data
-				isLoggedIn.value = true
-			}
-		} catch (e) {
-			console.error('获取个人信息失败', e)
+		const res = await getUserProfile()
+		if (res && res.data) {
+			userInfo.value = res.data
+			isLoggedIn.value = true
 		}
 	}
 
@@ -437,9 +454,13 @@
 
 	const uploadDialog = ref({
 		visible: false,
-		title: '',
-		message: '',
-		ticketInfo: null
+		title: '票根智能识别',
+		loading: false, // 识别中状态
+		message: '', // 加载提示文案 / 未通过原因
+		imageUrl: '', // 票根图片（后端云存储地址，失败退回本地临时图）
+		isValid: false, // 是否核验通过
+		infoRows: [], // 结构化票据信息 [{label, value}]
+		ticketInfo: null // 匹配商家区展示用
 	})
 
 	// 三级城市/县区穿透选择逻辑
@@ -492,20 +513,11 @@
 
 	async function fetchRegionsByPid(pid = 0) {
 		loadingCities.value = true
-		try {
-			const res = await getCitiesByPid({
-				pid
-			})
-			regionOptions.value = extractListData(res)
-		} catch (error) {
-			console.error('❌ 获取地区失败:', error)
-			uni.showToast({
-				title: '加载地区失败',
-				icon: 'none'
-			})
-		} finally {
-			loadingCities.value = false
-		}
+		const res = await getCitiesByPid({
+			pid
+		})
+		regionOptions.value = extractListData(res)
+		loadingCities.value = false
 	}
 
 	async function onSelectRegionItem(item) {
@@ -515,7 +527,7 @@
 
 		if (currentStep.value === 'province') {
 			if (isDirectCity) {
-				confirmLocation(targetName)
+				confirmLocation(targetName, targetId)
 			} else {
 				selectedProvince.value = item
 				currentStep.value = 'city'
@@ -524,54 +536,135 @@
 		} else if (currentStep.value === 'city') {
 			if (targetName === '直辖县级') {
 				loadingCities.value = true
-				try {
-					const res = await getCitiesByPid({
-						pid: targetId
-					})
-					const subList = extractListData(res)
-					if (subList && subList.length > 0) {
-						selectedCity.value = item
-						currentStep.value = 'district'
-						regionOptions.value = subList
-					}
-				} catch (e) {
-					console.error(e)
-				} finally {
-					loadingCities.value = false
-				}
-				return
-			}
-
-			loadingCities.value = true
-			try {
 				const res = await getCitiesByPid({
 					pid: targetId
 				})
 				const subList = extractListData(res)
-				if (subList && subList.length > 0) {
+				if (subList.length > 0) {
 					selectedCity.value = item
 					currentStep.value = 'district'
 					regionOptions.value = subList
-				} else {
-					confirmLocation(targetName)
 				}
-			} catch (e) {
-				confirmLocation(targetName)
-			} finally {
 				loadingCities.value = false
+				return
 			}
+
+			loadingCities.value = true
+			const res = await getCitiesByPid({
+				pid: targetId
+			})
+			const subList = extractListData(res)
+			if (subList.length > 0) {
+				selectedCity.value = item
+				currentStep.value = 'district'
+				regionOptions.value = subList
+			} else {
+				confirmLocation(targetName, targetId)
+			}
+			loadingCities.value = false
 		} else {
-			confirmLocation(targetName)
+			confirmLocation(targetName, targetId)
 		}
 	}
 
 	function confirmLocation(cityName) {
 		currentLocation.value = cityName
+		uni.setStorageSync('city_name', cityName)
 		closeCityPicker()
 		uni.showToast({
 			title: `已定位: ${cityName}`,
 			icon: 'none'
 		})
+		// 城市变化后重新拉取商家列表
+		loadShops()
+	}
+
+	// ===== GPS 自动定位城市 =====
+	// 名称归一化：去掉"省/市/自治区"等后缀，便于高德返回值与后端城市表匹配
+	function normalizeRegionName(name) {
+		return String(name || '')
+			.replace(/特别行政区|维吾尔自治区|壮族自治区|回族自治区|自治区|省|市/g, '')
+			.trim()
+	}
+
+	// 将定位/选择的区域写入状态并缓存（区/县、市、省各级通用）
+	function applyRegion(name) {
+		currentLocation.value = name
+		uni.setStorageSync('city_name', name)
+	}
+
+	// 会话内自动 GPS 定位只执行一次（进入页面 onMounted 或登录成功都会调到这里，
+	// 避免并发/重复触发多次定位与商家列表请求）；刷新页面会重新执行
+	let gpsLocated = false
+	async function ensureLocateCity(showTip = true) {
+		if (gpsLocated) return
+		gpsLocated = true
+		await locateCityByGps(showTip)
+	}
+
+	// GPS 定位 -> 高德逆地理编码 -> 逐级匹配后端省/市/区，尽量落到区级（区/县）
+	async function locateCityByGps(showTip = true) {
+		try {
+			const region = await getCurrentRegion()
+
+			// 1. 匹配省份
+			const provinceRes = await getCitiesByPid({ pid: 0 })
+			const provinces = extractListData(provinceRes)
+			const province = provinces.find(p =>
+				normalizeRegionName(p.name) === normalizeRegionName(region.province) ||
+				normalizeRegionName(p.shortname) === normalizeRegionName(region.province)
+			)
+			if (!province) throw new Error('省份未匹配')
+
+			const provinceId = province.Id ?? province.id
+			const provinceName = getRegionName(province)
+
+			// 2. 匹配市级（直辖市/特别行政区：省即市）
+			const directCities = ['北京', '天津', '上海', '重庆', '香港', '澳门', '台湾']
+			const isDirectCity = directCities.includes(provinceName)
+			let cityId = provinceId
+			let cityName = provinceName
+			if (!isDirectCity) {
+				// 高德 city 为空时退回用 district 去市级列表里找
+				const matchCityName = region.city || region.district
+				const cityRes = await getCitiesByPid({ pid: provinceId })
+				const cities = extractListData(cityRes)
+				const city = cities.find(c =>
+					normalizeRegionName(c.name) === normalizeRegionName(matchCityName) ||
+					normalizeRegionName(c.shortname) === normalizeRegionName(matchCityName)
+				)
+				if (!city) {
+					// 市级匹配不上，退回省级
+					applyRegion(provinceName, provinceId)
+					if (showTip) uni.showToast({ title: `已定位: ${provinceName}`, icon: 'none' })
+					return
+				}
+				cityId = city.Id ?? city.id
+				cityName = getRegionName(city)
+			}
+
+			// 3. 匹配区级（高德 district），命中则落到区/县，否则退回市级
+			const districtRes = await getCitiesByPid({ pid: cityId })
+			const districts = extractListData(districtRes)
+			const districtName = region.district || ''
+			const district = districts.find(d =>
+				districtName && (
+					normalizeRegionName(d.name) === normalizeRegionName(districtName) ||
+					normalizeRegionName(d.shortname) === normalizeRegionName(districtName)
+				)
+			)
+
+			if (district) {
+				applyRegion(getRegionName(district), district.Id ?? district.id)
+				if (showTip) uni.showToast({ title: `已定位: ${getRegionName(district)}`, icon: 'none' })
+			} else {
+				applyRegion(cityName, cityId)
+				if (showTip) uni.showToast({ title: `已定位: ${cityName}`, icon: 'none' })
+			}
+		} catch (e) {
+			console.error('定位失败:', e)
+			// 定位失败静默处理，不影响登录流程，保持默认城市
+		}
 	}
 
 	// 分类辅助方法
@@ -597,75 +690,52 @@
 		return String(activeId) === String(currentId)
 	}
 
-	// Mock 商家数据
-	const mockShops = ref([{
-			id: 101,
-			name: '赣州锦江国际酒店',
-			short_name: '锦江国际',
-			category_id: 1,
-			category_name: '酒店住宿',
-			discount: '立减 60 元',
-			discount_tag: '凭高铁票/机票',
-			distance: '距章贡中心 1.5km',
-			price: '388',
-			themeColor: 'linear-gradient(135deg, #1e3a8a, #1d4ed8)'
-		},
-		{
-			id: 201,
-			name: '余记兴国米粉鱼 (灶儿巷店)',
-			short_name: '兴国米粉鱼',
-			category_id: 2,
-			category_name: '地道美食',
-			discount: '满 100 减 20',
-			discount_tag: '凭古城墙门票',
-			distance: '距古城墙 200m',
-			price: '45',
-			themeColor: 'linear-gradient(135deg, #dc2626, #991b1b)'
-		},
-		{
-			id: 301,
-			name: '江南宋城历史文化街区',
-			short_name: '江南宋城',
-			category_id: 3,
-			category_name: '景区景点',
-			discount: '夜游船票 8 折',
-			discount_tag: '凭酒店住宿票根',
-			distance: '章贡区古城内',
-			price: '60',
-			themeColor: 'linear-gradient(135deg, #0284c7, #0369a1)'
-		},
-		{
-			id: 401,
-			name: '赣茶客家擂茶文化馆',
-			short_name: '客家擂茶',
-			category_id: 4,
-			category_name: '特色茶饮',
-			discount: '第二杯半价',
-			discount_tag: '凭古城景区票根',
-			distance: '距郁孤台 200m',
-			price: '18',
-			themeColor: 'linear-gradient(135deg, #16a34a, #15803d)'
-		}
-	])
+	// ===== 商家列表（真实接口）=====
+	const shopList = ref([])
+	const loadingShops = ref(false)
+	// 列表区 scroll-view 下拉刷新动画控制
+	const listRefreshing = ref(false)
+	// 用户当前经纬度（gcj02），传给接口后才能拿到 distance_km
+	const userPosition = ref(null)
 
-	const shopList = computed(() => {
-		let list = mockShops.value
-		if (recognizedStore.value) {
-			return list.filter(s => s.name.includes(recognizedStore.value) || s.category_name.includes(
-				recognizedStore.value))
+	// logo/cover_images 为逗号分隔字符串，取第一张
+	function firstImage(str) {
+		return String(str || '').split(',')[0].trim()
+	}
+
+	function formatDistance(km) {
+		const n = Number(km)
+		if (isNaN(n)) return ''
+		return n < 1 ? `${Math.round(n * 1000)}m` : `${n.toFixed(1)}km`
+	}
+
+	// 获取用户经纬度（失败静默，列表仍可展示但不带距离）
+	async function ensureUserPosition() {
+		if (userPosition.value) return userPosition.value
+		try {
+			userPosition.value = await getGpsPosition()
+		} catch (e) {
+			console.warn('获取用户经纬度失败，商家列表将不展示距离', e)
+			userPosition.value = null
 		}
-		if (activeCategory.value) {
-			const selectedCategoryName = getCategoryName(activeCategory.value)
-			const selectedCategoryId = String(getCategoryId(activeCategory.value))
-			return list.filter(s => {
-				const matchesId = String(s.category_id) === selectedCategoryId
-				const matchesName = selectedCategoryName && (s.category_name.includes(
-					selectedCategoryName) || selectedCategoryName.includes(s.category_name))
-				return matchesId || matchesName
-			})
+		return userPosition.value
+	}
+
+	async function loadShops(showLoading = true) {
+		if (showLoading) loadingShops.value = true
+		const category_id = activeCategory.value ? getCategoryId(activeCategory.value) : 0
+		const pos = await ensureUserPosition()
+		const params = {
+			category_id
 		}
-		return list
-	})
+		if (pos) {
+			params.user_lng = pos.longitude
+			params.user_lat = pos.latitude
+		}
+		const res = await getShopList(params)
+		shopList.value = extractListData(res)
+		loadingShops.value = false
+	}
 
 	function extractListData(res) {
 		if (!res) return []
@@ -678,16 +748,11 @@
 
 	async function loadCategories() {
 		loadingCategories.value = true
-		try {
-			const res = await getShopCategories({
-				parent_id: -1
-			})
-			categoryList.value = extractListData(res)
-		} catch (error) {
-			console.error('❌ 分类加载失败:', error)
-		} finally {
-			loadingCategories.value = false
-		}
+		const res = await getShopCategories({
+			parent_id: -1
+		})
+		categoryList.value = extractListData(res)
+		loadingCategories.value = false
 	}
 
 	function onSelectCategory(category) {
@@ -697,11 +762,13 @@
 		}
 		activeCategory.value = category
 		recognizedStore.value = ''
+		loadShops()
 	}
 
 	function resetCategoryFilter() {
 		activeCategory.value = null
 		recognizedStore.value = ''
+		loadShops()
 	}
 
 // ... 省略前面未改动代码 ...
@@ -721,51 +788,66 @@
 			sizeType: ['compressed'],
 			sourceType: ['album', 'camera'],
 			success: async (chooseRes) => {
-				const tempFilePath = chooseRes.tempFilePaths[0]
+				// 先压缩再上传，减小体积（长边超 1600px 等比缩小 + JPEG 0.8 质量）
+				const tempFilePath = await compressImage(chooseRes.tempFilePaths[0])
 
 				uploadDialog.value = {
 					visible: true,
 					title: '票根智能识别',
+					loading: true,
 					message: '正在上传并分析您的票根信息...',
+					imageUrl: '',
+					isValid: false,
+					infoRows: [],
 					ticketInfo: null
 				}
+				// 开始新一轮识别时清空上一轮残留的匹配商家，避免 match-box 显示旧数据
+				recognizedStore.value = ''
 
 				try {
-					// 调用已封装好的 uploadAndVerifyTicket 方法
+					// 调用已封装好的 uploadAndVerifyTicket 方法（成功与核验未通过都 resolve）
 					const res = await uploadAndVerifyTicket(tempFilePath, {
 						city: currentLocation.value
 					})
 
-					// 将整个后端返回的响应对象原封不动转为格式化的 JSON 字符串
-					const fullJsonString = JSON.stringify(res, null, 2)
+					// 后端返回结构: { code, msg, data: { ocr_result: {...}, user_img_url } }
+					const ocr = res?.data?.ocr_result || {}
+					const inner = ocr.data || {}
+					// code=400：核验未通过，隐藏 识别票种/第三方平台/标题/日期，仅展示核验结果与拒绝原因
+					const isRejected = Number(res?.code) === 400
 
-					if (mockShops.value.length > 1) {
-						mockShops.value[1] = {
-							id: 201,
-							name: fullJsonString,
-							short_name: '接口完整JSON',
-							category_id: 2,
-							category_name: 'API Response',
-							discount: '查看完整数据',
-							discount_tag: 'JSON调试',
-							distance: '实时返回',
-							price: '0',
-							themeColor: 'linear-gradient(135deg, #0f172a, #1e293b)'
-						}
-					}
+					// 组装结构化信息：字符串字段有值才显示，布尔字段（is_valid/is_same_template）存在即显示 是/否
+					const infoRows = []
+					if (!isRejected && ocr.ticket_category) infoRows.push({ label: '识别票种', value: ocr.ticket_category })
+					if (!isRejected && ocr.third_party_name) infoRows.push({ label: '第三方平台', value: ocr.third_party_name })
+					if (!isRejected && inner.title) infoRows.push({ label: '标题', value: inner.title })
+					if (inner.holder_name) infoRows.push({ label: '持有人', value: inner.holder_name })
+					if (!isRejected && inner.event_date) infoRows.push({ label: '日期', value: inner.event_date })
+					if (inner.ticket_sn) infoRows.push({ label: '票据编码', value: inner.ticket_sn })
+					if (inner.amount > 0) infoRows.push({ label: '票价', value: `¥${Number(inner.amount).toFixed(2)}` })
+					if (typeof ocr.is_valid === 'boolean') infoRows.push({ label: '真实票根', value: ocr.is_valid ? '是' : '否' })
+					if (typeof ocr.is_same_template === 'boolean') infoRows.push({ label: '票根模版', value: ocr.is_same_template ? '是' : '否' })
+					if (ocr.confidence > 0) infoRows.push({ label: '识别置信度', value: `${Math.round(ocr.confidence * 100)}%` })
 
-					recognizedStore.value = '' // 清空搜索过滤
+					const isValid = ocr.is_valid === true
 
-					// 【核心修改】将弹窗的 message 直接赋值为完整的 JSON 字符串
 					uploadDialog.value = {
 						visible: true,
-						title: '✨ 接口返回的 JSON 数据',
-						message: fullJsonString, // 直接显示 JSON
-						ticketInfo: {
-							type: 'JSON 调试模式',
-							discount: '查看弹窗与列表'
-						}
+						loading: false,
+						// 云端图加载失败时页面仍可用本地压缩图兜底展示
+						imageUrl: res?.data?.user_img_url || tempFilePath,
+						isValid,
+						infoRows,
+						// 未通过时展示拒绝原因
+						message: isValid ? '' : (ocr.reject_reason || res?.msg || '票根核验未通过'),
+						ticketInfo: isValid ? {
+						type: ocr.ticket_category || '票根',
+						discount: inner.amount > 0 ? `¥${Number(inner.amount).toFixed(2)}` : '专属折扣'
+					} : null
 					}
+
+					// 核验通过时展示匹配商家（识别出的票根来源），未通过则清空
+					recognizedStore.value = isValid ? (ocr.third_party_name || inner.title || '') : ''
 				} catch (error) {
 					uploadDialog.value.visible = false
 					uni.showToast({
@@ -777,25 +859,79 @@
 		})
 	}
 
+	// 点击弹窗中的票根图片放大预览
+	function previewTicketImage() {
+		if (uploadDialog.value.imageUrl) {
+			uni.previewImage({
+				current: uploadDialog.value.imageUrl,
+				urls: [uploadDialog.value.imageUrl]
+			})
+		}
+	}
+
 // ... 省略后面未改动代码 ...
 
 	function closeDialog() {
 		uploadDialog.value.visible = false
 	}
 
+	// 票根核验失败 → 人工审核：弹确认后拨打客服电话（临时占位号码）
+	function contactSupport() {
+		const phone = '400-800-1234'
+		uni.showModal({
+			title: '人工审核',
+			content: `识别失败可联系客服人工审核\n客服电话：${phone}`,
+			confirmText: '拨打',
+			cancelText: '取消',
+			success: (r) => {
+				if (r.confirm) {
+					uni.makePhoneCall({ phoneNumber: phone.replace(/-/g, '') })
+				}
+			}
+		})
+	}
+
 	function openShopDetail(shop) {
+		if (!shop || !shop.id) return
+		const name = encodeURIComponent(shop.name || shop.short_name || '')
+		const logo = encodeURIComponent(shop.logo || '')
+		// 先跳商家详情页，详情页内"优惠买单"再进优惠券列表
 		uni.navigateTo({
-			url: `/pages/shop/detail?id=${shop.id}`
+			url: `/pages/shop/detail/detail?shop_id=${shop.id}&name=${name}&logo=${logo}`
 		})
 	}
 
 	onMounted(() => {
 		loadCategories()
+		// 进入首页即拉取商家列表；距离由后端按定位经纬度计算 distance_km 返回
+		loadShops()
+		// 页面加载/刷新即按 GPS 自动定位所在城市（静默，不弹"已定位"提示）
+		ensureLocateCity(false)
+		// 登录失效被 request.js 重定向回首页时，自动唤起登录弹窗
+		if (uni.getStorageSync('NEED_LOGIN')) {
+			uni.removeStorageSync('NEED_LOGIN')
+			loginModalVisible.value = true
+		}
 		const token = uni.getStorageSync('pgtoken')
 		if (token) {
 			fetchProfileData()
 		}
 	})
+
+	// 商家列表区 scroll-view 下拉刷新：只重拉商家列表（不打断分类/登录态）
+	async function onListRefresh() {
+		const startAt = Date.now()
+		listRefreshing.value = true
+		try {
+			await loadShops(false)
+		} finally {
+			// 保证展开态至少渲染一帧且可见 500ms，否则接口秒回时 true→false 同批次抵消，动画卡住不回弹
+			const remain = Math.max(50, 500 - (Date.now() - startAt))
+			setTimeout(() => {
+				listRefreshing.value = false
+			}, remain)
+		}
+	}
 </script>
 
 <style lang="scss" scoped>
@@ -809,11 +945,30 @@
 	}
 
 	.page-shell {
-		min-height: 100vh;
+		/* fixed 而非 100vh：手机动态地址栏下 100vh 大于可视高度会让 body 可滚，
+		   下拉手势被页面级滚动接管，scroll-view 的 refresher 就拉不起来 */
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
 		padding: 0 28rpx;
 		background-color: #f8fafc;
 		color: #1e293b;
 		box-sizing: border-box;
+	}
+
+	/* 商家列表独立滚动区（顶部内容固定，仅该区可滚动/下拉刷新） */
+	.list-scroll {
+		flex: 1;
+		min-height: 0;
+		height: 0;
+		margin-top: 20rpx;
+		/* 禁用橡皮筋回弹，内容不足时不上滑虚滚 */
+		overscroll-behavior: none;
 	}
 
 	/* 顶栏设计 */
@@ -1150,6 +1305,8 @@
 		box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.03);
 
 		.shop-cover {
+			position: relative;
+			overflow: hidden;
 			width: 160rpx;
 			height: 160rpx;
 			border-radius: 14rpx;
@@ -1160,7 +1317,18 @@
 			flex-direction: column;
 			justify-content: space-between;
 
+			.cover-img {
+				position: absolute;
+				left: 0;
+				top: 0;
+				width: 100%;
+				height: 100%;
+				z-index: 0;
+			}
+
 			.cover-badge {
+				position: relative;
+				z-index: 1;
 				font-size: 16rpx;
 				background: rgba(0, 0, 0, 0.25);
 				padding: 2rpx 6rpx;
@@ -1169,6 +1337,8 @@
 			}
 
 			.cover-title {
+				position: relative;
+				z-index: 1;
 				font-size: 22rpx;
 				font-weight: 800;
 			}
@@ -1206,12 +1376,14 @@
 
 		.benefit-box {
 			display: flex;
-			align-items: center;
+			align-items: flex-start;
 			background: #fef2f2;
 			border: 1rpx solid #fee2e2;
-			padding: 4rpx 10rpx;
+			padding: 6rpx 10rpx;
 			border-radius: 8rpx;
 			width: fit-content;
+			max-width: 100%;
+			box-sizing: border-box;
 			margin: 8rpx 0;
 
 			.benefit-label {
@@ -1219,12 +1391,24 @@
 				font-weight: 800;
 				color: #dc2626;
 				margin-right: 8rpx;
+				flex-shrink: 0;
+				line-height: 1.5;
+				padding-top: 2rpx;
 			}
 
 			.benefit-val {
 				font-size: 20rpx;
 				font-weight: 700;
 				color: #b91c1c;
+				flex: 1;
+				min-width: 0;
+				line-height: 1.5;
+				/* 内容过多：最多显示 3 行，超出省略 */
+				display: -webkit-box;
+				-webkit-box-orient: vertical;
+				-webkit-line-clamp: 3;
+				overflow: hidden;
+				word-break: break-all;
 			}
 		}
 
@@ -1551,31 +1735,152 @@
 			}
 		}
 
-		.confirm-btn {
+		.dialog-btns {
+			display: flex;
+			gap: 20rpx;
 			margin-top: 32rpx;
-			background: #dc2626;
-			color: #fff;
-			font-weight: 800;
-			font-size: 28rpx;
-			height: 84rpx;
-			line-height: 84rpx;
-			border-radius: 16rpx;
-			border: none;
 
-			&::after {
+			.confirm-btn,
+			.manual-btn {
+				flex: 1;
+				color: #fff;
+				font-weight: 800;
+				font-size: 28rpx;
+				height: 84rpx;
+				line-height: 84rpx;
+				border-radius: 16rpx;
 				border: none;
+
+				&::after {
+					border: none;
+				}
+			}
+
+			.confirm-btn {
+				background: #dc2626;
+			}
+
+			.manual-btn {
+				background: #ffffff;
+				color: #dc2626;
+				border: 2rpx solid #dc2626;
 			}
 		}
-		/* 弹窗内部滚动与 JSON 排版优化 */
-			.dialog-scroll-box {
-				max-height: 45vh;       /* 限制最大高度，防止弹窗超出屏幕 */
-				margin-top: 16rpx;
-				background: #f8fafc;
-				border-radius: 12rpx;
-				padding: 16rpx;
-				box-sizing: border-box;
-				border: 1rpx solid #e2e8f0;
+		/* 弹窗内部滚动与票根结果排版 */
+		.dialog-scroll-box {
+			max-height: 45vh;       /* 限制最大高度，防止弹窗超出屏幕 */
+			margin-top: 16rpx;
+			background: #f8fafc;
+			border-radius: 12rpx;
+			padding: 16rpx;
+			box-sizing: border-box;
+			border: 1rpx solid #e2e8f0;
+			overflow: hidden;       /* 外层兜底裁剪，防止内层失效时撑破弹窗 */
+
+			/* 修复 H5 端 scroll-view 不支持 max-height：
+			   uni-scroll-view 内层默认 height:100%，百分比高度不参照父级 max-height 解析，
+			   需断开高度链，让内层自身成为滚动容器（calc 减去上下 padding 32rpx + 边框 2rpx） */
+			:deep(.uni-scroll-view) {
+				height: auto;
+				max-height: calc(45vh - 34rpx);
+				overflow-y: auto;
 			}
+		}
+
+		/* 识别中 */
+		.ticket-loading {
+			padding: 60rpx 0;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+
+			.loading-spinner {
+				width: 64rpx;
+				height: 64rpx;
+				border: 6rpx solid #e2e8f0;
+				border-top-color: #dc2626;
+				border-radius: 50%;
+				animation: spin 0.8s linear infinite;
+			}
+
+			.loading-text {
+				margin-top: 24rpx;
+				font-size: 24rpx;
+				color: #64748b;
+			}
+		}
+		@keyframes spin { to { transform: rotate(360deg); } }
+
+		/* 核验结果徽标 */
+		.verify-badge {
+			display: inline-flex;
+			align-items: center;
+			padding: 10rpx 24rpx;
+			border-radius: 999rpx;
+			font-size: 24rpx;
+			font-weight: 800;
+
+			&.ok { background: #dcfce7; color: #15803d; }
+			&.bad { background: #fee2e2; color: #b91c1c; }
+		}
+
+		/* 未通过原因 */
+		.reject-reason {
+			margin-top: 16rpx;
+			padding: 20rpx;
+			background: #fef2f2;
+			border-radius: 12rpx;
+
+			.reject-text {
+				font-size: 24rpx;
+				color: #991b1b;
+				line-height: 1.6;
+			}
+		}
+
+		/* 票根图片 */
+		.ticket-img {
+			width: 200rpx;
+			height: 100rpx;
+			margin-top: 20rpx;
+			border-radius: 12rpx;
+			border: 1rpx solid #e2e8f0;
+			background: #fff;
+		}
+
+		/* 票据信息明细 */
+		.ticket-info-list {
+			margin-top: 20rpx;
+			background: #fff;
+			border-radius: 12rpx;
+			border: 1rpx solid #e2e8f0;
+			overflow: hidden;
+
+			.ticket-info-row {
+				display: flex;
+				justify-content: space-between;
+				align-items: flex-start;
+				padding: 20rpx 24rpx;
+				border-bottom: 1rpx solid #f1f5f9;
+
+				&:last-child { border-bottom: none; }
+
+				.ticket-info-label {
+					font-size: 24rpx;
+					color: #64748b;
+					flex-shrink: 0;
+					margin-right: 24rpx;
+				}
+
+				.ticket-info-value {
+					font-size: 24rpx;
+					color: #0f172a;
+					font-weight: 600;
+					text-align: right;
+					word-break: break-all;
+				}
+			}
+		}
 
 			.dialog-sub {
 				font-size: 22rpx;

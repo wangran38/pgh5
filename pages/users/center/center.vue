@@ -18,7 +18,7 @@
         <text class="arrow">›</text>
       </view>
 
-      <view class="menu-item" @click="goTo('/pages/users/coupon/coupon')">
+      <view class="menu-item" @click="goTo('/pages/users/couponslist/couponslist')">
         <text class="icon">🧧</text>
         <text class="text">我的优惠券</text>
         <text class="arrow">›</text>
@@ -36,9 +36,9 @@
         <text class="arrow">›</text>
       </view>
 
-      <view class="menu-item" @click="goTo('/pages/shop/shopapply/shop-apply')">
-        <text class="icon">🏪</text>
-        <text class="text">商户入驻</text>
+      <view class="menu-item" @click="goTo('/pages/shop/center/center')">
+        <text class="icon">🏬</text>
+        <text class="text">商家中心</text>
         <text class="arrow">›</text>
       </view>
     </view>
@@ -60,13 +60,9 @@ const userInfo = ref({
 })
 
 onMounted(async () => {
-  try {
-    const res = await getUserProfile()
-    if (res.error_code === 0 && res.data) {
-      userInfo.value = res.data
-    }
-  } catch (e) {
-    console.error('获取个人信息失败', e)
+  const res = await getUserProfile()
+  if (res && res.data) {
+    userInfo.value = res.data
   }
 })
 
@@ -92,7 +88,6 @@ function handleLogout() {
 
 <style lang="scss" scoped>
 .center-container {
-  min-height: 100vh;
   background-color: #f8fafc;
   padding: 30rpx;
   box-sizing: border-box;

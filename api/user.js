@@ -1,4 +1,4 @@
-import request from '@/utils/request' // 请根据你实际的项目路径调整
+import { get, post } from '@/utils/request' // 请根据你实际的项目路径调整
 
 /**
  * 1. 用户短信发送接口
@@ -6,11 +6,7 @@ import request from '@/utils/request' // 请根据你实际的项目路径调整
  * @param {string} data.mobile 用户手机号码 (必选)
  */
 export function sendSms(data) {
-  return request({
-    url: '/send-sms',
-    method: 'POST',
-    data
-  })
+  return post('/send-sms', data)
 }
 
 /**
@@ -20,23 +16,31 @@ export function sendSms(data) {
  * @param {string} data.code 手机验证码 (必选，未成功可填 888888)
  */
 export function quickLogin(data) {
-  return request({
-    url: '/quick-login',
-    method: 'POST',
-    data
-  })
+  return post('/quick-login', data)
 }
 
 export function getUserProfile() {
   const pgtoken = uni.getStorageSync('pgtoken') || ''
-  console.log('【前端调试】准备发送的 token:', pgtoken)
 
-  return request({
-    url: '/user/profile',
-    method: 'GET',
+  return get('/user/profile', {}, {
+    // 探测登录态用，失败（未登录/token过期）不弹全局提示，由页面自行处理
+    silent: true,
     header: {
       // 换成标准 Authorization 头部，并加上 Bearer 前缀
       'Authorization': `Bearer ${pgtoken}`
+    }
+  })
+}
+
+/**
+ * 获取我的票根列表（分页）
+ * @param {Object} data
+ */
+export function getUserTicketList(data = {}) {
+  const pgtoken = uni.getStorageSync('pgtoken') || ''
+  return post('/user/ticket/list', data, {
+    header: {
+      'pgtoken': pgtoken
     }
   })
 }

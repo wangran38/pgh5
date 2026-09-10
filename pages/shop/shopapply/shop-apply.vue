@@ -196,25 +196,19 @@ async function checkShopApplyStatus() {
     return
   }
 
-  try {
-    const res = await getShopApplyStatus()
-    // 状态码为 200 表示成功查询到记录
-    if (res && res.code === 200 && res.data) {
-      const { has_apply, status, shop_id, id } = res.data
-      // 判断 has_apply 为真（如 "1" 或 true）时表示已有申请记录
-      if (String(has_apply) === '1' || has_apply === true) {
-        applyStatusData.value = {
-          has_apply,
-          status: Number(status),
-          shop_id: shop_id || id // 兼容不同字段的店铺 ID
-        }
+  const res = await getShopApplyStatus()
+  if (res && res.data) {
+    const { has_apply, status, shop_id, id } = res.data
+    // 判断 has_apply 为真（如 "1" 或 true）时表示已有申请记录
+    if (String(has_apply) === '1' || has_apply === true) {
+      applyStatusData.value = {
+        has_apply,
+        status: Number(status),
+        shop_id: shop_id || id // 兼容不同字段的店铺 ID
       }
     }
-  } catch (err) {
-    console.error('获取商家申请状态异常:', err)
-  } finally {
-    hasLoadedStatus.value = true
   }
+  hasLoadedStatus.value = true
 }
 
 // 跳转到店铺资料编辑/补充页面
@@ -279,14 +273,9 @@ function closeCategoryPicker() {
 
 async function loadCategories() {
   loadingCategories.value = true
-  try {
-    const res = await getShopCategories({ parent_id: -1 })
-    categoryList.value = extractListData(res)
-  } catch (err) {
-    console.error('获取分类失败', err)
-  } finally {
-    loadingCategories.value = false
-  }
+  const res = await getShopCategories({ parent_id: -1 })
+  categoryList.value = extractListData(res)
+  loadingCategories.value = false
 }
 
 function onSelectCategoryItem(item) {
@@ -349,14 +338,9 @@ function navBackStep() {
 
 async function fetchRegionsByPid(pid = 0) {
   loadingCities.value = true
-  try {
-    const res = await getCitiesByPid({ pid })
-    regionOptions.value = extractListData(res)
-  } catch (error) {
-    console.error('获取地区失败:', error)
-  } finally {
-    loadingCities.value = false
-  }
+  const res = await getCitiesByPid({ pid })
+  regionOptions.value = extractListData(res)
+  loadingCities.value = false
 }
 
 async function onSelectRegionItem(item) {
@@ -374,37 +358,16 @@ async function onSelectRegionItem(item) {
     }
   } else if (currentStep.value === 'city') {
     selectedCity.value = item
-    if (targetName === '直辖县级') {
-      loadingCities.value = true
-      try {
-        const res = await getCitiesByPid({ pid: targetId })
-        const subList = extractListData(res)
-        if (subList && subList.length > 0) {
-          currentStep.value = 'district'
-          regionOptions.value = subList
-          return
-        }
-      } catch (e) {
-        console.error(e)
-      } finally {
-        loadingCities.value = false
-      }
-    }
-
     loadingCities.value = true
-    try {
-      const res = await getCitiesByPid({ pid: targetId })
-      const subList = extractListData(res)
-      if (subList && subList.length > 0) {
-        currentStep.value = 'district'
-        regionOptions.value = subList
-      } else {
-        finalizeCitySelection(targetId, targetName)
-      }
-    } catch (e) {
+    const res = await getCitiesByPid({ pid: targetId })
+    const subList = extractListData(res)
+    loadingCities.value = false
+
+    if (subList.length > 0) {
+      currentStep.value = 'district'
+      regionOptions.value = subList
+    } else {
       finalizeCitySelection(targetId, targetName)
-    } finally {
-      loadingCities.value = false
     }
   } else {
     selectedDistrict.value = item
@@ -455,23 +418,14 @@ async function submitApply() {
   if (!formData.value.address) return uni.showToast({ title: '请输入详细经营地址', icon: 'none' })
 
   submitting.value = true
-  try {
-    const res = await applyShop(formData.value)
+  const res = await applyShop(formData.value)
+  submitting.value = false
+  if (!res) return // 失败已由 request.js 统一提示
 
-    if (res.code === 200 || res.error_code === 0 || res.code === 0) {
-      uni.showToast({ title: '提交成功，请等待审核', icon: 'success' })
-      setTimeout(() => {
-        checkShopApplyStatus() // 提交成功后重新校验状态，切换为状态展示视图
-      }, 1500)
-    } else {
-      uni.showToast({ title: res.msg || res.message || '提交失败', icon: 'none' })
-    }
-  } catch (err) {
-    console.error('提交入驻申请异常:', err)
-    uni.showToast({ title: '网络异常，请稍后重试', icon: 'none' })
-  } finally {
-    submitting.value = false
-  }
+  uni.showToast({ title: '提交成功，请等待审核', icon: 'success' })
+  setTimeout(() => {
+    checkShopApplyStatus() // 提交成功后重新校验状态，切换为状态展示视图
+  }, 1500)
 }
 
 onMounted(() => {

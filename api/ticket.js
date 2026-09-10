@@ -1,4 +1,4 @@
-import request from '@/utils/request.js'
+import { baseURL } from '@/utils/request.js'
 
 /**
  * 优化后的票根上传与AI核验接口
@@ -8,8 +8,8 @@ import request from '@/utils/request.js'
 export function uploadAndVerifyTicket(filePath, extraData = {}) {
   const token = uni.getStorageSync('pgtoken') || ''
 
-  // 获取基础路径并去掉末尾的斜杠
-  let baseUrl = import.meta.env?.VITE_BASE_URL || ''
+  // 获取基础路径并去掉末尾的斜杠（统一使用 request.js 的后端地址）
+  let baseUrl = baseURL || ''
   if (baseUrl.endsWith('/')) {
     baseUrl = baseUrl.slice(0, -1)
   }
@@ -33,11 +33,11 @@ export function uploadAndVerifyTicket(filePath, extraData = {}) {
       },
       formData: extraData, // 额外表单参数，如 city 等
       success: (res) => {
-        console.log('【DEBUG】后端票根核验原始响应: ', res.data)
         try {
           const data = JSON.parse(res.data)
-          // 兼容常见的成功状态码
-          if (data.code === 200 || data.code === 0 || data.error_code === 0) {
+          // 核验成功(200)与核验未通过(400)都 resolve 完整响应：
+          // 页面需根据 is_valid / reject_reason 做结构化回显，只有网络/解析异常才 reject
+          if (data.code === 200 || data.code === 400 || data.code === 0 || data.error_code === 0) {
             resolve(data)
           } else {
             reject(data.msg || data.message || '票根核验失败')

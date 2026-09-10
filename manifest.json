@@ -1,6 +1,6 @@
 {
     "name" : "pgh5-1.0",
-    "appid" : "__UNI__85D1ACC",
+    "appid" : "__UNI__526A70A",
     "description" : "",
     "versionName" : "1.0.0",
     "versionCode" : "100",
@@ -71,6 +71,21 @@
         "router" : {
             "mode" : "history",
             "base" : "./"
+        },
+        /* 手机真机调试：监听 0.0.0.0 允许局域网设备访问 */
+        "devServer" : {
+            "host" : "0.0.0.0",
+            "port" : 5177,
+            "https" : false
+        },
+        /* 高德地图SDK配置：供 uni.chooseLocation / uni.getLocation 使用 */
+        "sdkConfigs" : {
+            "maps" : {
+                "amap" : {
+                    "key" : "3ac12da8e709853de761a13f8e03eebe",
+                    "securityJsCode" : "b8c62648a74d6493cd21c0c3b1feb40b"
+                }
+            }
         }
     },
     "fallbackLocale" : "zh-Hans"

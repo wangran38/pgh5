@@ -8,6 +8,13 @@
 			}
 		},
 		{
+			"path": "pages/index/index2",
+			"style": {
+				"navigationBarTitleText": "陈皮票根",
+				"navigationStyle": "custom"
+			}
+		},
+		{
 			"path": "pages/users/center/center",
 			"style": {
 				"navigationBarTitleText": "会员中心",
@@ -24,6 +31,36 @@
 			}
 		},
 		{
+			"path": "pages/users/ticket-wallet/ticket-wallet",
+			"style": {
+				"navigationBarTitleText": "我的票根",
+				"navigationBarBackgroundColor": "#1e3a8a",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/users/couponslist/couponslist",
+			"style": {
+				"navigationBarTitleText": "优惠券列表",
+				"navigationBarBackgroundColor": "#1e3a8a",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/users/order/order",
+			"style": {
+				"navigationBarTitleText": "我的订单",
+				"navigationBarBackgroundColor": "#1e3a8a",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+		  "path": "pages/shop/shopinfo/shopinfo",
+		  "style": {
+		    "navigationBarTitleText": "资料管理"
+		  }
+		},
+		{
 		  "path": "pages/shop/shopapply/shop-apply",
 		  "style": {
 		    "navigationBarTitleText": "入驻申请",
@@ -32,11 +69,45 @@
 		  }
 		},
 		{
-		  "path": "pages/shop/shopinfo/shopinfo",
+		  "path": "pages/shop/center/center",
 		  "style": {
-		    "navigationBarTitleText": "资料管理"
+		    "navigationBarTitleText": "商家中心",
+		    "navigationBarBackgroundColor": "#1e3a8a",
+		    "navigationBarTextStyle": "white"
 		  }
-		}
+		},
+		{
+	  "path": "pages/shop/promo/promo",
+	  "style": {
+	    "navigationBarTitleText": "新增优惠券",
+	    "navigationBarBackgroundColor": "#1e3a8a",
+	    "navigationBarTextStyle": "white"
+	  }
+	},
+	{
+	  "path": "pages/shop/couponlist/couponlist",
+	  "style": {
+	    "navigationBarTitleText": "优惠券列表",
+	    "navigationBarBackgroundColor": "#1e3a8a",
+	    "navigationBarTextStyle": "white"
+	  }
+	},
+	{
+	  "path": "pages/shop/detail/detail",
+	  "style": {
+	    "navigationBarTitleText": "详情",
+	    "navigationBarBackgroundColor": "#1e3a8a",
+	    "navigationBarTextStyle": "white"
+	  }
+	},
+	{
+	  "path": "pages/shop/coupons/coupons",
+	  "style": {
+	    "navigationBarTitleText": "订单支付",
+	    "navigationBarBackgroundColor": "#1e3a8a",
+	    "navigationBarTextStyle": "white"
+	  }
+	}
 	],
 	"globalStyle": {
 		"navigationBarTextStyle": "black",

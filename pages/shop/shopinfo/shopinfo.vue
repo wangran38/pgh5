@@ -154,6 +154,7 @@ import { ref, reactive, computed } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { getShopInfo, editShop } from '@/api/shop.js'
 import { uploadImage } from '@/api/upload.js' // 正确引入封装好的上传接口
+import { compressImage } from '@/utils/compressImage.js' // 上传前图片压缩
 
 const currentTab = ref(0)
 
@@ -225,19 +226,12 @@ onLoad((options) => {
 })
 
 const loadShopDetail = async (shopId) => {
-  try {
-    uni.showLoading({ title: '加载中...' })
-    const res = await getShopInfo({ shop_id: shopId })
-    uni.hideLoading()
+  uni.showLoading({ title: '加载中...' })
+  const res = await getShopInfo({ shop_id: shopId })
+  uni.hideLoading()
 
-    if (res.code === 200 && res.data) {
-      Object.assign(form, res.data)
-    } else {
-      uni.showToast({ title: res.message || '获取店铺信息失败', icon: 'none' })
-    }
-  } catch (error) {
-    uni.hideLoading()
-    uni.showToast({ title: '网络异常', icon: 'none' })
+  if (res && res.data) {
+    Object.assign(form, res.data)
   }
 }
 
@@ -259,7 +253,9 @@ const uploadLogo = () => {
     success: async (res) => {
       try {
         uni.showLoading({ title: 'LOGO上传中...' })
-        const uploadRes = await uploadImage(res.tempFilePaths[0])
+        // 上传前压缩，减小体积
+        const filePath = await compressImage(res.tempFilePaths[0])
+        const uploadRes = await uploadImage(filePath)
         uni.hideLoading()
 
         // 适配后端返回的 URL 路径结构
@@ -288,7 +284,11 @@ const uploadCoverImages = () => {
     success: async (res) => {
       uni.showLoading({ title: '图片上传中...' })
       try {
-        const uploadPromises = res.tempFilePaths.map(filePath => uploadImage(filePath))
+        // 逐张压缩后并发上传
+        const uploadPromises = res.tempFilePaths.map(async (filePath) => {
+          const compressed = await compressImage(filePath)
+          return uploadImage(compressed)
+        })
         const results = await Promise.all(uploadPromises)
 
         uni.hideLoading()
@@ -318,21 +318,13 @@ const handleSubmit = async () => {
   if (!form.contact_phone) return uni.showToast({ title: '请填写联系电话', icon: 'none' })
   if (!form.address) return uni.showToast({ title: '请完善详细地址与定位', icon: 'none' })
 
-  try {
-    uni.showLoading({ title: '保存中...' })
-    const res = await editShop(form)
-    uni.hideLoading()
+  uni.showLoading({ title: '保存中...' })
+  const res = await editShop(form)
+  uni.hideLoading()
+  if (!res) return // 失败已由 request.js 统一提示
 
-    if (res.code === 200 || res.error_code === 0) {
-      uni.showToast({ title: '修改成功', icon: 'success' })
-      setTimeout(() => { uni.navigateBack() }, 1500)
-    } else {
-      uni.showToast({ title: res.message || res.msg || '保存失败', icon: 'none' })
-    }
-  } catch (error) {
-    uni.hideLoading()
-    uni.showToast({ title: '网络异常', icon: 'none' })
-  }
+  uni.showToast({ title: '修改成功', icon: 'success' })
+  setTimeout(() => { uni.navigateBack() }, 1500)
 }
 </script>
 

@@ -1,4 +1,4 @@
-import request from '@/utils/request.js'
+import { baseURL } from '@/utils/request.js'
 
 /**
  * 统一图片上传接口
@@ -7,8 +7,8 @@ import request from '@/utils/request.js'
 export function uploadImage(filePath) {
   const token = uni.getStorageSync('pgtoken') || ''
 
-  // 获取基础路径并去掉末尾的斜杠
-  let baseUrl = import.meta.env?.VITE_BASE_URL || ''
+  // 获取基础路径并去掉末尾的斜杠（统一使用 request.js 的后端地址）
+  let baseUrl = baseURL || ''
   if (baseUrl.endsWith('/')) {
     baseUrl = baseUrl.slice(0, -1)
   }
