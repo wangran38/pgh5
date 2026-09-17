@@ -120,13 +120,12 @@ export function verifyOrder(data = {}) {
 /**
  * 设置订单支付方式（收银台选定后调用；下单时不传 pay_type，以这里的选择为准）
  * @param {Object} data
- * @param {number} data.order_id - 订单id
- * @param {string} [data.order_no] - 订单号
- * @param {number} data.pay_type - 支付方式：1 在线支付 2 到店付现（线下）（见 PAY_TYPE）
+ * @param {string} data.order_no - 订单号（必填，后端按订单号记账）
+ * @param {number} data.pay_type - 支付模式（必填）：1 在线支付 2 当面核销付（见 PAY_TYPE）
  */
 export function updateOrderPayType(data = {}) {
   const token = uni.getStorageSync('pgtoken') || ''
-  return post('/user/order/pay-type', data, {
+  return post('/user/order/update-pay-type', data, {
     header: {
       'pgtoken': token
     }

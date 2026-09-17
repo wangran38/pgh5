@@ -26,7 +26,7 @@
       </view>
 
       <text class="tip">二维码会动态更新，截图无效；核销成功后本码立即失效</text>
-      <text v-if="fromLocal" class="tip warn">当前由本地出签（/user/order/qrcode 未接入）</text>
+      <!-- <text v-if="fromLocal" class="tip warn">当前由本地出签（/user/order/qrcode 未接入）</text> -->
 
       <button class="refresh-btn" :disabled="qrLoading" @click="reload">立即刷新</button>
     </view>

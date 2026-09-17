@@ -102,15 +102,14 @@ function safeDecode(s) {
 // 确认：先记账本单支付方式，再按方式走付款或线下结算
 async function onConfirm() {
   if (submitting.value) return
-  if (!orderId.value) {
+  if (!orderNo.value) {
     uni.showToast({ title: '订单信息缺失，请返回重试', icon: 'none' })
     return
   }
   submitting.value = true
 
-  // 1. 告知后端本单采用的支付方式
+  // 1. 告知后端本单采用的支付方式（按订单号记账）
   const res = await updateOrderPayType({
-    order_id: orderId.value,
     order_no: orderNo.value,
     pay_type: Number(payType.value)
   })
@@ -119,15 +118,21 @@ async function onConfirm() {
     return // 失败已由 request.js 统一提示
   }
 
-  // 2a. 到店付现：到此为止，等待到店付款 + 商家核销
+  // 2a. 到店付现：跳出示核销码页，商家扫码核销后完成
   if (payType.value === PAY_TYPE.CASH) {
-    uni.showToast({ title: '已选择到店付现，请向商家出示订单核销', icon: 'none' })
-    gotoOrderList(1500)
     submitting.value = false
+    uni.redirectTo({
+      url:
+        '/pages/users/order/qrcode?order_no=' + encodeURIComponent(orderNo.value) +
+        '&amount=' + payAmount.value +
+        '&shop_name=' + encodeURIComponent(shopName.value || '')
+    })
     return
   }
 
   // 2b. 在线支付：选择渠道后调起支付
+  // ⚠️ 后端 /user/order/pay 尚未实现在线付款，此处保留完整流程待后端就绪；
+  //    目前点击会由 request.js 提示失败，不影响到店付现链路。
   const channel = await choosePayChannel()
   if (!channel) {
     uni.showToast({ title: '已保留订单，可在「我的订单」继续支付', icon: 'none' })
