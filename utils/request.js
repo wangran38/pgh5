@@ -16,10 +16,31 @@
 
 // 所有接口（含 uni.uploadFile 上传）的统一后端地址，改这一处即可全局切换
 // export const baseURL = 'http://192.168.0.114:8081/api'
-export const baseURL = 'https://wx.chenpecloud.com/api'
+// export const baseURL = 'https://wx.chenpecloud.com/api'
+export const baseURL = 'https://api.chenpecloud.com/api'
 // export const baseURL = 'http://localhost:8081/api'
 
 // 核心请求方法：options 兼容 { url, method, data, header, silent, ... }
+// 后端错误信息字段不统一：有时返回 msg、有时返回 message，个别接口用 error。
+// 统一在这里兼容，新增字段只需改这一处。
+// @param {Object} body 响应体（或 null）
+// @param {String} fallback 兜底文案
+export function pickErrMsg(body, fallback = '') {
+  const b = body || {}
+  return b.msg || b.message || b.error || fallback
+}
+
+// 最近一次「业务失败」的响应体。
+// 背景：请求失败时本工具统一 toast 后 resolve(null)，页面拿不到后端自定义的 message；
+// 少数场景（如核销结果卡）需要把后端 message 展示在页面上，可通过 takeLastErrorBody() 读取。
+// 注意：仅供「单次请求后立即读取」使用，不要跨请求依赖。
+let lastErrorBody = null
+export function takeLastErrorBody() {
+  const b = lastErrorBody
+  lastErrorBody = null
+  return b
+}
+
 export function request(options) {
   const url = options.url || ''
   const finalUrl = baseURL + (url.startsWith('/') ? url : '/' + url)
@@ -30,13 +51,19 @@ export function request(options) {
       method: options.method || 'GET',
       header: options.header || {},
       data: options.data || options.params,
+      // 接口无响应兜底：超时按网络失败处理（走 fail 分支，toast + resolve null），
+      // 避免请求永久挂起导致页面 loading 卡死；单个接口可传 options.timeout 覆盖
+      timeout: options.timeout || 20000,
       success: (res) => {
         const body = res.data
         if (body && body.code === 200) {
+          lastErrorBody = null
           resolve(body)
           return
         }
-        const msg = (body && (body.msg || body.message)) || '请求失败'
+        const msg = pickErrMsg(body, '请求失败')
+        // 记录失败响应体，供需要展示后端 message 的页面读取
+        lastErrorBody = body || null
         // 登录失效：清本地凭证并回首页唤起登录弹窗
         if ((body && Number(body.code) === 401) || res.statusCode === 401) {
           handleUnauthorized(msg)
@@ -47,6 +74,7 @@ export function request(options) {
         resolve(null)
       },
       fail: () => {
+        lastErrorBody = null
         showError(options, '网络异常，请稍后重试')
         resolve(null)
       }

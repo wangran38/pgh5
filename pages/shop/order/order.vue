@@ -18,17 +18,19 @@
     </view>
 
     <!-- 状态筛选（固定） -->
-    <view class="tabs">
-      <view
-        v-for="t in statusTabs"
-        :key="String(t.value)"
-        class="tab"
-        :class="{ on: activeStatus === t.value }"
-        @click="switchStatus(t.value)"
-      >
-        <text>{{ t.label }}</text>
+    <scroll-view class="tabs-wrap" scroll-x>
+      <view class="tabs">
+        <view
+          v-for="t in statusTabs"
+          :key="String(t.value)"
+          class="tab"
+          :class="{ on: activeStatus === t.value }"
+          @click="switchStatus(t.value)"
+        >
+          <text>{{ t.label }}</text>
+        </view>
       </view>
-    </view>
+    </scroll-view>
 
     <!-- 自动滚动容器：内容排满才可滚；自带下拉刷新与触底加载 -->
     <auto-scroll
@@ -44,25 +46,24 @@
         <view v-for="o in list" :key="o.id" class="order-card">
           <view class="card-head">
             <text class="order-no">{{ o.order_no }}</text>
-            <text v-if="payTypeText(o.pay_type)" class="payway">{{ payTypeText(o.pay_type) }}</text>
-            <text class="status" :class="'s' + Number(o.status)">{{ statusText(o) }}</text>
+            <text class="status" :class="'s' + Number(o.status)">{{ statusText(o.status) }}</text>
+          </view>
+
+          <view class="tag-row">
+            <text v-if="payTypeText(o.pay_type)" class="tag payway">{{ payTypeText(o.pay_type) }}</text>
+            <text v-if="Number(o.is_lock) === 1" class="tag locked">已锁定</text>
+            <text v-if="o.user_id" class="tag buyer">买家 #{{ o.user_id }}</text>
           </view>
 
           <view class="amount-row">
-            <text class="pay-label">应付</text>
+            <text class="pay-label">实付</text>
             <text class="pay-num">¥{{ money(o.payable_amount) }}</text>
             <text v-if="Number(o.original_amount) > 0" class="orig">原价 ¥{{ money(o.original_amount) }}</text>
           </view>
 
           <view class="meta-row">
             <text class="saved">已优惠 ¥{{ money(o.discount_amount) }}</text>
-            <text class="time">{{ fmtTime(o.created_at) }}</text>
-          </view>
-
-          <!-- 线下付订单无需线上付款，直接去核销；线上付待支付时才去支付 -->
-          <view v-if="showActions(o)" class="actions">
-            <text v-if="needVerify(o)" class="act-btn" @click="goQR(o)">去核销</text>
-            <text v-else class="act-btn" @click="goPay(o)">去支付</text>
+            <text class="time">{{ timeText(o) }}</text>
           </view>
         </view>
 
@@ -80,16 +81,24 @@
 <script setup>
 import { ref, watch, nextTick } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import { getOrderList, PAY_TYPE, payTypeText, isOfflinePay } from '@/api/order.js'
+import { getShopOrderList, payTypeText } from '@/api/order.js'
 import { usePageList } from '@/utils/usePageList.js'
 import AutoScroll from '@/components/auto-scroll/auto-scroll.vue'
 
-// 状态筛选：null 为全部，1待支付 2已支付 3已取消
+// 商家订单状态：1待支付 2待核销 3已核销 4已取消
+const STATUS_MAP = {
+  1: '待支付',
+  2: '待核销',
+  3: '已核销',
+  4: '已取消'
+}
+
 const statusTabs = [
   { label: '全部', value: null },
   { label: '待支付', value: 1 },
-  { label: '已支付', value: 2 },
-  { label: '已取消', value: 3 }
+  { label: '待核销', value: 2 },
+  { label: '已核销', value: 3 },
+  { label: '已取消', value: 4 }
 ]
 
 const keyword = ref('')
@@ -97,16 +106,16 @@ const activeStatus = ref(null)
 const scrollRef = ref(null)
 const listRefreshing = ref(false)
 
-// 分页拉取订单：keyword/status 变化时由 refresh() 触发重新请求
+// 分页拉取：keyword / status 变化后由 refresh() 重新请求
 const { list, loading, finished, refresh, loadMore } = usePageList((p) => {
   const params = { page: p.page, limit: p.limit }
   const kw = keyword.value.trim()
   if (kw) params.order_no = kw
   if (activeStatus.value != null) params.status = activeStatus.value
-  return getOrderList(params)
+  return getShopOrderList(params)
 })
 
-// 每次进入页面（含下单返回）都刷新第一页
+// 每次进入页面（含从核销页返回）都刷新第一页
 onShow(async () => {
   await refresh()
   await nextTick()
@@ -119,7 +128,6 @@ watch(list, async () => {
   if (scrollRef.value && scrollRef.value.sync) scrollRef.value.sync()
 })
 
-// 下拉刷新 / 触底加载
 async function onAutoRefresh() {
   listRefreshing.value = true
   try {
@@ -133,43 +141,6 @@ function onLower() {
   loadMore()
 }
 
-// 需要出现操作按钮：待支付(1) 或 待核销/已支付(2)
-function showActions(o) {
-  const s = Number(o.status)
-  return s === 1 || s === 2
-}
-
-// 是否该「去核销」而不是「去支付」：
-//   1) 已支付待核销(2)：线上付完款，出示核销码给商家扫
-//   2) 线下付订单(pay_type=1)：本来就不用线上付款，到店付现后直接核销
-function needVerify(o) {
-  if (Number(o.status) === 2) return true
-  return isOfflinePay(o.pay_type)
-}
-
-// 待支付订单：带金额信息跳收银台，继续选择「在线支付 / 到店付现」
-function goPay(o) {
-  const amount = Number(o.payable_amount) || 0
-  const url =
-    '/pages/users/pay/pay?order_id=' + (o.id ?? o.order_id) +
-    '&order_no=' + encodeURIComponent(o.order_no || '') +
-    '&amount=' + amount +
-    '&total=' + (Number(o.original_amount) || amount) +
-    '&discount=' + (Number(o.discount_amount) || 0) +
-    '&shop_name=' + encodeURIComponent(o.shop_name || o.shopName || '')
-  uni.navigateTo({ url })
-}
-
-// 待核销订单：打开出示核销码页（二维码每 30 秒自动刷新）
-function goQR(o) {
-  const url =
-    '/pages/users/order/qrcode?order_no=' + encodeURIComponent(o.order_no || '') +
-    '&amount=' + (Number(o.payable_amount) || 0) +
-    '&shop_name=' + encodeURIComponent(o.shop_name || o.shopName || '')
-  uni.navigateTo({ url })
-}
-
-// 关键词搜索
 function doSearch() {
   refresh()
 }
@@ -179,43 +150,49 @@ function clearSearch() {
   refresh()
 }
 
-// 状态筛选切换
 function switchStatus(v) {
   if (activeStatus.value === v) return
   activeStatus.value = v
   refresh()
 }
 
-const STATUS_MAP = {
-  1: '待支付',
-  2: '已支付',
-  3: '已取消'
+function statusText(s) {
+  return STATUS_MAP[Number(s)] || '未知'
 }
 
-function statusText(o) {
-  const s = Number(o && o.status)
-  // 到店付现订单没有线上付款环节，订单创建后等待商家核销
-  if (s === 1 && Number(o && o.pay_type) === PAY_TYPE.CASH) return '待核销'
-  return STATUS_MAP[s] || '未知'
+// 已核销展示核销时间，其余展示下单时间
+function timeText(o) {
+  if (Number(o.status) === 3 && o.verified_at) return `核销 ${fmtTime(o.verified_at)}`
+  return fmtTime(o.created_at || o.verified_at)
+}
+
+// 兼容后端三种时间格式：秒级时间戳 / 毫秒时间戳 / "2026-09-08T17:12:02+08:00"
+function fmtTime(v) {
+  if (!v) return ''
+  const raw = String(v)
+  if (/^\d+$/.test(raw)) {
+    const n = Number(raw)
+    const ms = raw.length <= 10 ? n * 1000 : n
+    const d = new Date(ms)
+    if (!isNaN(d.getTime())) {
+      const p = (x) => String(x).padStart(2, '0')
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+    }
+    return raw
+  }
+  return raw.replace('T', ' ').slice(0, 16)
 }
 
 // 金额展示，去掉多余的尾数（550 / 550.5）
 function money(v) {
   return Number(Number(v || 0).toFixed(2))
 }
-
-// 后端时间 "2026-09-08T17:12:02+08:00" → "2026-09-08 17:12"
-function fmtTime(s) {
-  if (!s) return ''
-  return String(s).replace('T', ' ').slice(0, 16)
-}
 </script>
 
 <style lang="scss" scoped>
 .page {
   /* fixed 而非 100vh：手机动态地址栏下 100vh 大于可视高度会让 body 可滚，
-     下拉手势被页面级滚动接管，scroll-view 的 refresher 拉不起来。
-     top 用 --window-top 避开系统导航栏 */
+     下拉手势被页面级滚动接管，scroll-view 的 refresher 拉不起来 */
   position: fixed;
   top: var(--window-top, 44px);
   right: 0;
@@ -224,7 +201,7 @@ function fmtTime(s) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background-color: #f1f5f9;
+  background-color: #f8fafc;
   padding: 24rpx;
   box-sizing: border-box;
 }
@@ -282,24 +259,27 @@ function fmtTime(s) {
   }
 }
 
-/* ===== 状态筛选 ===== */
-.tabs {
+/* ===== 状态筛选：横向可滚，避免 5 个 tab 挤压 ===== */
+.tabs-wrap {
   flex-shrink: 0;
-  display: flex;
+  margin-bottom: 24rpx;
+  white-space: nowrap;
+}
+
+.tabs {
+  display: inline-flex;
   align-items: center;
   background: #fff;
   border-radius: 24rpx;
   padding: 12rpx 16rpx;
-  margin-bottom: 24rpx;
   box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.03);
 
   .tab {
-    flex: 1;
+    padding: 14rpx 28rpx;
     text-align: center;
     font-size: 26rpx;
     font-weight: 600;
     color: #64748b;
-    padding: 14rpx 0;
     border-radius: 999rpx;
 
     &.on {
@@ -341,17 +321,6 @@ function fmtTime(s) {
       margin-right: 16rpx;
     }
 
-    .payway {
-      flex-shrink: 0;
-      margin-right: 12rpx;
-      font-size: 22rpx;
-      font-weight: 700;
-      color: #1d4ed8;
-      background: #eff6ff;
-      border-radius: 999rpx;
-      padding: 4rpx 16rpx;
-    }
-
     .status {
       flex-shrink: 0;
       font-size: 22rpx;
@@ -360,15 +329,36 @@ function fmtTime(s) {
       padding: 4rpx 16rpx;
 
       &.s1 { color: #b45309; background: #fef3c7; }
-      &.s2 { color: #15803d; background: #dcfce7; }
-      &.s3 { color: #64748b; background: #f1f5f9; }
+      &.s2 { color: #1d4ed8; background: #eff6ff; }
+      &.s3 { color: #15803d; background: #dcfce7; }
+      &.s4 { color: #64748b; background: #f1f5f9; }
     }
+  }
+
+  .tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    margin-top: 16rpx;
+
+    .tag {
+      font-size: 20rpx;
+      font-weight: 700;
+      border-radius: 6rpx;
+      padding: 4rpx 12rpx;
+      margin-right: 12rpx;
+      color: #475569;
+      background: #f1f5f9;
+    }
+
+    .payway { color: #1d4ed8; background: #eff6ff; }
+    .locked { color: #b45309; background: #fef3c7; }
+    .buyer { color: #64748b; background: #f8fafc; }
   }
 
   .amount-row {
     display: flex;
     align-items: baseline;
-    margin-top: 24rpx;
+    margin-top: 20rpx;
 
     .pay-label {
       font-size: 24rpx;
@@ -405,24 +395,6 @@ function fmtTime(s) {
     .saved {
       color: #ff2d55;
       font-weight: 600;
-    }
-  }
-
-  .actions {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 20rpx;
-    padding-top: 20rpx;
-    border-top: 1rpx solid #f1f5f9;
-
-    .act-btn {
-      font-size: 26rpx;
-      font-weight: 700;
-      color: #2563eb;
-      border: 1rpx solid #bfdbfe;
-      background: #eff6ff;
-      border-radius: 999rpx;
-      padding: 10rpx 34rpx;
     }
   }
 }

@@ -10,7 +10,20 @@
       <text class="arrow">›</text>
     </view>
 
-    <!-- 5大功能核心宫格列表 -->
+    <!-- 商家中心入口卡（按入驻状态分态） -->
+    <view class="shop-entry" @click="goTo('/pages/shop/center/center')">
+      <view class="entry-badge">商家版</view>
+      <view class="entry-main">
+        <text class="entry-icon">🏬</text>
+        <view class="entry-text">
+          <text class="entry-title">商家中心</text>
+          <text class="entry-desc">{{ shopEntryDesc }}</text>
+        </view>
+      </view>
+      <text class="entry-arrow">›</text>
+    </view>
+
+    <!-- 功能核心宫格列表 -->
     <view class="menu-card">
       <view class="menu-item" @click="goTo('/pages/users/ticket-wallet/ticket-wallet')">
         <text class="icon">🎫</text>
@@ -35,12 +48,6 @@
         <text class="text">个人资料</text>
         <text class="arrow">›</text>
       </view>
-
-      <view class="menu-item" @click="goTo('/pages/shop/center/center')">
-        <text class="icon">🏬</text>
-        <text class="text">商家中心</text>
-        <text class="arrow">›</text>
-      </view>
     </view>
 
     <!-- 退出登录按钮 -->
@@ -49,8 +56,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { getUserProfile } from '@/api/user.js'
+import { getShopApplyStatus } from '@/api/shop.js'
 
 const userInfo = ref({
   nickname: '加载中...',
@@ -59,10 +67,32 @@ const userInfo = ref({
   avatar: ''
 })
 
+// ===== 商家入驻状态（驱动入口卡文案分态）=====
+// status: 无值=未入驻, 0=审核中, 1=营业中, 2=休息中, 3=已冻结, -1/4=驳回
+const shopStatus = ref(null)
+const shopName = ref('')
+
+const shopEntryDesc = computed(() => {
+  if (shopStatus.value == null) return '0 元开店，立即入驻'
+  const s = String(shopStatus.value)
+  if (s === '0') return '资料审核中，点击查看进度'
+  if (s === '1' || s === '2') {
+    return shopName.value ? `${shopName.value} · 进入商家工作台` : '进入商家工作台'
+  }
+  if (s === '3') return '店铺已被冻结，点击查看'
+  return '申请未通过，点击重新提交'
+})
+
 onMounted(async () => {
   const res = await getUserProfile()
   if (res && res.data) {
     userInfo.value = res.data
+  }
+  // 未登录/无申请记录时静默失败，入口卡保持"未入驻"态
+  const applyRes = await getShopApplyStatus()
+  if (applyRes && applyRes.data) {
+    shopStatus.value = applyRes.data.status
+    shopName.value = applyRes.data.name || applyRes.data.shop_name || ''
   }
 })
 
@@ -119,6 +149,72 @@ function handleLogout() {
   }
 
   .arrow { font-size: 36rpx; opacity: 0.7; }
+}
+
+/* 商家中心入口卡：与用户卡同色系，形成"身份区" */
+.shop-entry {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+  border-radius: 24rpx;
+  padding: 30rpx 32rpx;
+  margin-bottom: 30rpx;
+  color: #fff;
+  box-shadow: 0 8rpx 20rpx rgba(30, 58, 138, 0.2);
+  overflow: hidden;
+
+  .entry-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    font-size: 20rpx;
+    font-weight: 700;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.22);
+    padding: 6rpx 18rpx;
+    border-radius: 0 24rpx 0 24rpx;
+  }
+
+  .entry-main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+
+    .entry-icon {
+      font-size: 44rpx;
+      margin-right: 22rpx;
+    }
+
+    .entry-text {
+      flex: 1;
+      min-width: 0;
+
+      .entry-title {
+        display: block;
+        font-size: 32rpx;
+        font-weight: 900;
+      }
+
+      .entry-desc {
+        display: block;
+        margin-top: 8rpx;
+        font-size: 22rpx;
+        opacity: 0.85;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+    }
+  }
+
+  .entry-arrow {
+    flex-shrink: 0;
+    font-size: 36rpx;
+    opacity: 0.7;
+    margin-left: 16rpx;
+  }
 }
 
 .menu-card {

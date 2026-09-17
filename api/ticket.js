@@ -1,4 +1,4 @@
-import { baseURL } from '@/utils/request.js'
+import { baseURL, pickErrMsg } from '@/utils/request.js'
 
 /**
  * 优化后的票根上传与AI核验接口
@@ -40,7 +40,7 @@ export function uploadAndVerifyTicket(filePath, extraData = {}) {
           if (data.code === 200 || data.code === 400 || data.code === 0 || data.error_code === 0) {
             resolve(data)
           } else {
-            reject(data.msg || data.message || '票根核验失败')
+            reject(pickErrMsg(data, '票根核验失败'))
           }
         } catch (e) {
           reject('解析响应数据失败')

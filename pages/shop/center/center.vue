@@ -35,7 +35,13 @@
 
         <view class="menu-item" @click="goToTickets">
           <text class="icon">🎫</text>
-          <text class="text">核销优惠券</text>
+          <text class="text">核销中心</text>
+          <text class="arrow">›</text>
+        </view>
+
+        <view class="menu-item" @click="goToOrders">
+          <text class="icon">📦</text>
+          <text class="text">订单管理</text>
           <text class="arrow">›</text>
         </view>
 
@@ -165,7 +171,12 @@ function goToShopInfo() {
 }
 
 function goToTickets() {
-  uni.showToast({ title: '功能开发中', icon: 'none' })
+  const query = shopId.value ? `?shop_id=${shopId.value}` : ''
+  uni.navigateTo({ url: `/pages/shop/verify/verify${query}` })
+}
+
+function goToOrders() {
+  uni.navigateTo({ url: '/pages/shop/order/order' })
 }
 
 function goToPromo() {

@@ -22,7 +22,9 @@
     <view class="ticket-card" @click="openTicketPicker">
       <view class="ticket-label">
         <text class="ticket-title">使用票根</text>
-        <text class="ticket-hint">凭票根享优惠</text>
+        <text class="ticket-hint">
+          {{ pickedTicketId != null ? '已选票根，可使用优惠券' : '选票根后才能使用优惠券' }}
+        </text>
       </view>
       <view class="ticket-value">
         <template v-if="pickedTicket">
@@ -42,6 +44,11 @@
       @refresherrefresh="onAutoRefresh"
       @scrolltolower="onLower"
     >
+      <!-- 未选票根时优惠券整体不可用，给出明确原因 -->
+      <view v-if="pickedTicketId == null && list.length > 0" class="tip-bar">
+        优惠券需凭票根使用，请先选择票根
+      </view>
+
       <view v-if="loading && list.length === 0" class="state-text">加载中...</view>
 
       <template v-else-if="list.length > 0">
@@ -95,7 +102,7 @@
       <view v-else-if="!loading" class="state-text">该店铺暂无优惠券</view>
     </auto-scroll>
 
-    <!-- 底部支付栏 -->
+    <!-- 底部结算栏：点击后先选支付方式，再按该方式创建订单 -->
     <view class="pay-bar">
       <view class="pay-info">
         <view class="pay-row">
@@ -152,7 +159,6 @@ import { onLoad } from '@dcloudio/uni-app'
 import { getShopCoupons } from '@/api/shop.js'
 import { getUserTicketList } from '@/api/user.js'
 import { createOrder } from '@/api/order.js'
-import { pay, PAY_CHANNELS } from '@/utils/payment.js'
 import { usePageList } from '@/utils/usePageList.js'
 import AutoScroll from '@/components/auto-scroll/auto-scroll.vue'
 
@@ -176,6 +182,8 @@ const shopName = ref('')
 const amountInput = ref('')
 const listRefreshing = ref(false)
 const scrollRef = ref(null)
+
+
 
 // ===== 票根选择 =====
 const pickedTicketId = ref(null)
@@ -226,10 +234,13 @@ watch(list, async () => {
   if (scrollRef.value && scrollRef.value.sync) scrollRef.value.sync()
 })
 
-// 满减/折扣券（适用消费总额买单）：金额达到门槛才点亮，否则置灰。
+// 满减/折扣券（适用消费总额买单）：必须已选票根 + 金额达到门槛才点亮，否则置灰。
+// 优惠券是票根权益，没有票根时只能按原价支付，不能使用优惠券。
 // 门票类(3/4)不适用消费总额场景，始终置灰不可选。
 function isUsable(c) {
   if (!isPickable(c)) return false
+  // 未选择票根 → 所有优惠券不可选
+  if (pickedTicketId.value == null) return false
   const amt = Number(amountInput.value)
   if (!amt || amt <= 0) return false
   const min = Number(c.min_point || 0)
@@ -259,6 +270,11 @@ function onPick(c) {
 // 金额变化后，若已选券不再满足门槛则自动取消勾选
 watch(amountInput, () => {
   if (pickedId.value != null && pickedCoupon.value && !isUsable(pickedCoupon.value)) pickedId.value = null
+})
+
+// 取消票根后优惠券失去使用资格，自动取消已选券
+watch(pickedTicketId, (v) => {
+  if (v == null && pickedId.value != null) pickedId.value = null
 })
 // 列表刷新后若已选券已不存在则清除选中
 watch(list, (val) => {
@@ -292,6 +308,7 @@ const payAmount = computed(() => Math.max(0, money(totalMoney.value - savedAmoun
 // 下单中标志，防重复提交
 const submitting = ref(false)
 
+// 创建订单 → 跳转收银台（在线支付 / 到店付现在收银台选择）
 async function onPay() {
   if (totalMoney.value <= 0) {
     uni.showToast({ title: '请先输入消费金额', icon: 'none' })
@@ -301,6 +318,7 @@ async function onPay() {
   submitting.value = true
 
   // ticket_id/coupon_id 均非必选：不选券、不选票根也能按原价购买
+  // pay_type 不在这里传：支付方式由收银台选定后回传后端
   const params = {
     shop_id: Number(shopId.value),
     amount: payAmount.value,
@@ -310,57 +328,32 @@ async function onPay() {
   if (pickedId.value != null) params.coupon_id = Number(pickedId.value)
   if (pickedTicketId.value != null) params.ticket_id = Number(pickedTicketId.value)
 
-  // 1. 创建订单
   const res = await createOrder(params)
   if (!res) {
     submitting.value = false
     return // 失败已由 request.js 统一提示
   }
-  const order = res.data || {}
+  // 后端返回 { coupon, order, ticket }，订单主体在 data.order 里；同时兼容订单字段直接平铺的情况
+  const data = res.data || {}
+  const order = data.order || data
   const orderId = order.id ?? order.order_id
-  const orderNo = order.order_no
+  const orderNo = order.order_no || order.orderNo || ''
 
-  // 2. 选择支付渠道（用户取消 → 订单已创建，去订单列表继续支付）
-  const channel = await choosePayChannel()
-  if (!channel) {
+  if (!orderId) {
     submitting.value = false
-    uni.showToast({ title: '订单已创建，可在「我的订单」继续支付', icon: 'none' })
-    setTimeout(() => uni.navigateBack(), 1500)
+    uni.showToast({ title: '订单创建异常，请重试', icon: 'none' })
     return
   }
 
-  // 3. 调起支付
-  try {
-    const result = await pay({ orderId, orderNo, channel })
-    uni.showToast({
-      title: result === 'pending' ? '支付已发起，请完成支付' : '支付成功',
-      icon: result === 'pending' ? 'none' : 'success'
-    })
-    setTimeout(() => uni.navigateBack(), 1200)
-  } catch (e) {
-    if (e && e.silent) {
-      // 获取支付参数失败，request.js 已提示
-    } else if (e && e.message === 'cancel') {
-      uni.showToast({ title: '已取消支付', icon: 'none' })
-    } else {
-      uni.showToast({ title: (e && e.message) || '支付失败', icon: 'none' })
-    }
-  } finally {
-    submitting.value = false
-  }
-}
-
-// 弹出支付渠道选择；取消返回 null
-function choosePayChannel() {
-  return new Promise((resolve) => {
-    uni.showActionSheet({
-      itemList: PAY_CHANNELS.map((c) => c.label),
-      success: (r) => {
-        const hit = PAY_CHANNELS[r.tapIndex]
-        resolve(hit ? hit.value : null)
-      },
-      fail: () => resolve(null)
-    })
+  // 当前页出栈，交给收银台完成支付；返回时不会回到已提交的买单页
+  uni.redirectTo({
+    url:
+      '/pages/users/pay/pay?order_id=' + orderId +
+      '&order_no=' + encodeURIComponent(orderNo) +
+      '&amount=' + payAmount.value +
+      '&total=' + totalMoney.value +
+      '&discount=' + savedAmount.value +
+      '&shop_name=' + encodeURIComponent(shopName.value || '')
   })
 }
 
@@ -542,6 +535,18 @@ function foldText(v) {
   padding: 120rpx 0;
 }
 
+/* 未选票根提示条 */
+.tip-bar {
+  margin-bottom: 20rpx;
+  padding: 18rpx 24rpx;
+  border-radius: 16rpx;
+  background: #fff7ed;
+  border: 1rpx solid #fed7aa;
+  color: #b45309;
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+
 /* ===== 使用票根选择行 ===== */
 .ticket-card {
   flex-shrink: 0;
@@ -653,6 +658,7 @@ function foldText(v) {
       height: 60vh;
       box-sizing: border-box;
       padding: 0 28rpx 40rpx;
+
     }
 
     .sheet-item {
@@ -894,7 +900,7 @@ function foldText(v) {
   color: #94a3b8;
 }
 
-/* ===== 底部支付栏 ===== */
+/* ===== 底部结算栏 ===== */
 .pay-bar {
   flex-shrink: 0;
   /* 负外边距抵消页面 padding，通栏贴底 */

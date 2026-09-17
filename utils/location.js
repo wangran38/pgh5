@@ -69,6 +69,22 @@ function wgs84ToGcj02(lng, lat) {
   return [lng + dLng, lat + dLat]
 }
 
+// 定位/逆地理编码总超时：超过即按"获取不到"处理，由上层兜底（默认城市 / 列表不带距离），
+// 避免权限弹窗未决或接口无响应时 Promise 长期挂起，导致页面 loading 卡死
+const LOCATION_TIMEOUT = 8000
+const GEOCODE_TIMEOUT = 5000
+
+// 超时兜底：ms 内未 settle 则 reject
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) }
+    )
+  })
+}
+
 // H5 端优先用高德定位（返回即 gcj02，与地图标点零偏移）；失败则回退原生定位 + WGS84 纠偏
 async function getH5Position() {
   try {
@@ -77,7 +93,8 @@ async function getH5Position() {
       AMap.plugin('AMap.Geolocation', () => {
         const geolocation = new AMap.Geolocation({
           enableHighAccuracy: true,
-          timeout: 8000,
+          // 留出预算给下面的原生定位回退（总超时 LOCATION_TIMEOUT 会兜住）
+          timeout: 5000,
           zoomToAccuracy: false
         })
         geolocation.getCurrentPosition((status, result) => {
@@ -104,19 +121,19 @@ async function getH5Position() {
   }
 }
 
-// 获取定位坐标（统一返回 gcj02，与高德一致）
+// 获取定位坐标（统一返回 gcj02，与高德一致）；超过 LOCATION_TIMEOUT 视为获取不到
 function getGpsPosition() {
   // #ifdef H5
-  return getH5Position()
+  return withTimeout(getH5Position(), LOCATION_TIMEOUT, '定位超时')
   // #endif
   // #ifndef H5
-  return new Promise((resolve, reject) => {
+  return withTimeout(new Promise((resolve, reject) => {
     uni.getLocation({
       type: 'gcj02',
       success: (res) => resolve({ longitude: res.longitude, latitude: res.latitude }),
       fail: (err) => reject(new Error(err?.errMsg || '获取定位失败'))
     })
-  })
+  }), LOCATION_TIMEOUT, '定位超时')
   // #endif
 }
 
@@ -143,10 +160,14 @@ async function reverseGeocode(longitude, latitude) {
   })
 }
 
-// 一步到位：GPS -> 省市区名称
+// 一步到位：GPS -> 省市区名称（逆地理编码同样加超时，异常统一抛给调用方兜底）
 async function getCurrentRegion() {
   const pos = await getGpsPosition()
-  return reverseGeocode(pos.longitude, pos.latitude)
+  return withTimeout(
+    reverseGeocode(pos.longitude, pos.latitude),
+    GEOCODE_TIMEOUT,
+    '逆地理编码超时'
+  )
 }
 
 export { loadAMap, getGpsPosition, reverseGeocode, getCurrentRegion }

@@ -167,3 +167,30 @@ export function getCouponList(data = {}) {
 export function getShopCoupons(data = {}) {
   return post('/shop/coupons', data)
 }
+
+/**
+ * 券码核销（B 端扫码/输码）
+ * @param {Object} data
+ * 返回 data 约定：{ coupon_id, title, discount_amount, verified_at, ... }
+ */
+export function verifyCoupon(data = {}) {
+  const token = uni.getStorageSync('pgtoken') || ''
+  return post('/user/shop/coupon/verify', data, {
+    header: {
+      'pgtoken': token
+    }
+  })
+}
+
+/**
+ * 核销记录列表（分页）
+ * @param {Object} data
+ */
+export function getVerifyRecordList(data = {}) {
+  const token = uni.getStorageSync('pgtoken') || ''
+  return post('/user/shop/coupon/verify-list', data, {
+    header: {
+      'pgtoken': token
+    }
+  })
+}

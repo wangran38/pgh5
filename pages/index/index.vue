@@ -144,6 +144,10 @@
 
 				<view v-if="loadingCities" class="loading-state">地区数据加载中...</view>
 
+				<view v-else-if="regionError" class="region-error" @click="reloadCurrentRegions">
+					地区数据加载失败，点击重试
+				</view>
+
 				<scroll-view v-else scroll-y class="region-scroll">
 					<view class="region-grid">
 						<view v-for="item in regionOptions" :key="item.Id || item.id" class="region-chip"
@@ -305,10 +309,43 @@
 	import {
 		compressImage
 	} from '@/utils/compressImage.js' // 上传前图片压缩
+	import {
+		pickErrMsg
+	} from '@/utils/request.js' // 后端错误字段兼容（msg / message）
+
+	// ===== 通用兜底工具 =====
+	// 超时兜底：接口长时间无响应时按失败处理，避免弹窗/列表 loading 一直转圈
+	function withTimeout(promise, ms, message) {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error(message)), ms)
+			promise.then(
+				(v) => {
+					clearTimeout(timer)
+					resolve(v)
+				},
+				(e) => {
+					clearTimeout(timer)
+					reject(e)
+				}
+			)
+		})
+	}
+
+	// 轻量点击锁：只对"连点会产生副作用"的入口按需加锁，不做全局防抖/节流
+	const tapLocks = {}
+	function withTapLock(key, ms, fn) {
+		if (tapLocks[key]) return
+		tapLocks[key] = true
+		setTimeout(() => {
+			tapLocks[key] = false
+		}, ms)
+		return fn()
+	}
 
 	// 1. 基础状态
-	// 从本地缓存恢复上次定位/选择的城市，避免刷新后退回默认"赣州"
-	const currentLocation = ref(uni.getStorageSync('city_name') || '赣州')
+	// 定位失败时的兜底城市；有缓存则优先用上次定位/选择的城市
+	const DEFAULT_CITY = '海口'
+	const currentLocation = ref(uni.getStorageSync('city_name') || DEFAULT_CITY)
 	const activeCategory = ref(null)
 	const categoryList = ref([])
 	const recognizedStore = ref('')
@@ -333,14 +370,17 @@
 	let timer = null
 
 	// 点击右上角会员区域
-	async function handleMemberClick() {
-		if (isLoggedIn.value) {
-			uni.navigateTo({
-				url: '/pages/users/center/center'
-			})
-		} else {
-			loginModalVisible.value = true
-		}
+	function handleMemberClick() {
+		// 连点会重复 navigateTo 压栈，加 800ms 点击锁
+		withTapLock('member', 800, () => {
+			if (isLoggedIn.value) {
+				uni.navigateTo({
+					url: '/pages/users/center/center'
+				})
+			} else {
+				loginModalVisible.value = true
+			}
+		})
 	}
 
 	function closeLoginModal() {
@@ -410,6 +450,14 @@
 		const {
 			data
 		} = res
+		// 兜底：接口返回 code=200 但缺少数据时直接提示重试，避免读 token 抛异常
+		if (!data || !data.token) {
+			uni.showToast({
+				title: '登录响应异常，请重试',
+				icon: 'none'
+			})
+			return
+		}
 		uni.setStorageSync('pgtoken', data.token)
 
 		isLoggedIn.value = true
@@ -466,6 +514,7 @@
 	// 三级城市/县区穿透选择逻辑
 	const cityPickerVisible = ref(false)
 	const loadingCities = ref(false)
+	const regionError = ref(false) // 地区列表加载失败（可点击重试）
 	const currentStep = ref('province')
 	const selectedProvince = ref(null)
 	const selectedCity = ref(null)
@@ -513,11 +562,36 @@
 
 	async function fetchRegionsByPid(pid = 0) {
 		loadingCities.value = true
-		const res = await getCitiesByPid({
-			pid
-		})
-		regionOptions.value = extractListData(res)
-		loadingCities.value = false
+		regionError.value = false
+		try {
+			const res = await getCitiesByPid({
+				pid
+			})
+			// request.js 失败时 resolve null（已统一 toast），标记失败态让用户可点击重试
+			if (!res) {
+				regionOptions.value = []
+				regionError.value = true
+				return
+			}
+			regionOptions.value = extractListData(res)
+		} catch (e) {
+			console.error('地区列表加载异常:', e)
+			regionOptions.value = []
+			regionError.value = true
+		} finally {
+			loadingCities.value = false
+		}
+	}
+
+	// 地区列表加载失败后，按当前层级重试（省 → 市 → 区）
+	function reloadCurrentRegions() {
+		if (currentStep.value === 'city') {
+			return fetchRegionsByPid(selectedProvince.value?.Id ?? selectedProvince.value?.id)
+		}
+		if (currentStep.value === 'district') {
+			return fetchRegionsByPid(selectedCity.value?.Id ?? selectedCity.value?.id)
+		}
+		return fetchRegionsByPid(0)
 	}
 
 	async function onSelectRegionItem(item) {
@@ -553,6 +627,11 @@
 			const res = await getCitiesByPid({
 				pid: targetId
 			})
+			// 接口无响应/失败：保持当前层级，不要把「市」误当作最终城市（提示已由 request.js 统一给出）
+			if (!res) {
+				loadingCities.value = false
+				return
+			}
 			const subList = extractListData(res)
 			if (subList.length > 0) {
 				selectedCity.value = item
@@ -662,8 +741,9 @@
 				if (showTip) uni.showToast({ title: `已定位: ${cityName}`, icon: 'none' })
 			}
 		} catch (e) {
-			console.error('定位失败:', e)
-			// 定位失败静默处理，不影响登录流程，保持默认城市
+			// 定位超时、权限被拒、逆地理编码失败等一律静默兜底：
+			// currentLocation 初值已是「缓存城市 ?? 默认城市(赣州)」，这里无需再赋值，页面照常可用
+			console.warn('GPS 定位失败，继续使用缓存/默认城市:', currentLocation.value, e)
 		}
 	}
 
@@ -710,31 +790,62 @@
 	}
 
 	// 获取用户经纬度（失败静默，列表仍可展示但不带距离）
-	async function ensureUserPosition() {
-		if (userPosition.value) return userPosition.value
-		try {
-			userPosition.value = await getGpsPosition()
-		} catch (e) {
-			console.warn('获取用户经纬度失败，商家列表将不展示距离', e)
-			userPosition.value = null
-		}
-		return userPosition.value
+	// 同一会话内只定位一次；失败后不每次加载都重试，下拉刷新可传 force=true 再试一次
+	let positionPromise = null
+	function ensureUserPosition(force = false) {
+		if (userPosition.value) return Promise.resolve(userPosition.value)
+		if (positionPromise && !force) return positionPromise
+		positionPromise = getGpsPosition()
+			.then((pos) => {
+				userPosition.value = pos
+				return pos
+			})
+			.catch((e) => {
+				console.warn('获取用户经纬度失败，商家列表将不展示距离', e)
+				userPosition.value = null
+				return null
+			})
+		return positionPromise
 	}
 
-	async function loadShops(showLoading = true) {
-		if (showLoading) loadingShops.value = true
+	// 商家列表：同一参数并发只发一次；用自增序号丢弃过期响应（快速切分类时列表不会错乱）
+	let shopsSeq = 0
+	let shopsPending = null
+	function loadShops(showLoading = true) {
 		const category_id = activeCategory.value ? getCategoryId(activeCategory.value) : 0
-		const pos = await ensureUserPosition()
-		const params = {
-			category_id
+		// 相同参数的请求还在进行中，直接复用（分类连点/刷新重复触发不会重复请求）
+		if (shopsPending && shopsPending.key === String(category_id)) return shopsPending.promise
+
+		const seq = ++shopsSeq
+		const promise = (async () => {
+			if (showLoading) loadingShops.value = true
+			try {
+				const pos = await ensureUserPosition()
+				const params = {
+					category_id
+				}
+				if (pos) {
+					params.user_lng = pos.longitude
+					params.user_lat = pos.latitude
+				}
+				const res = await getShopList(params)
+				// 已有更新的请求在跑，丢弃本次过期响应
+				if (seq !== shopsSeq) return
+				shopList.value = extractListData(res)
+			} catch (e) {
+				// 异常兜底：不让"商家加载中..."卡死，回退空态（提示已由 request.js 统一给出）
+				console.error('商家列表加载异常:', e)
+				if (seq === shopsSeq) shopList.value = []
+			} finally {
+				if (seq === shopsSeq) loadingShops.value = false
+				if (shopsPending && shopsPending.promise === promise) shopsPending = null
+			}
+		})()
+		shopsPending = {
+			key: String(category_id),
+			promise
 		}
-		if (pos) {
-			params.user_lng = pos.longitude
-			params.user_lat = pos.latitude
-		}
-		const res = await getShopList(params)
-		shopList.value = extractListData(res)
-		loadingShops.value = false
+		return promise
 	}
 
 	function extractListData(res) {
@@ -748,11 +859,18 @@
 
 	async function loadCategories() {
 		loadingCategories.value = true
-		const res = await getShopCategories({
-			parent_id: -1
-		})
-		categoryList.value = extractListData(res)
-		loadingCategories.value = false
+		try {
+			const res = await getShopCategories({
+				parent_id: -1
+			})
+			categoryList.value = extractListData(res)
+		} catch (e) {
+			// 异常兜底：不卡"加载分类中..."，回退空态（提示已由 request.js 统一给出）
+			console.error('分类加载异常:', e)
+			categoryList.value = []
+		} finally {
+			loadingCategories.value = false
+		}
 	}
 
 	function onSelectCategory(category) {
@@ -788,9 +906,7 @@
 			sizeType: ['compressed'],
 			sourceType: ['album', 'camera'],
 			success: async (chooseRes) => {
-				// 先压缩再上传，减小体积（长边超 1600px 等比缩小 + JPEG 0.8 质量）
-				const tempFilePath = await compressImage(chooseRes.tempFilePaths[0])
-
+				// 先进入 loading 态再压缩上传：压缩/上传任一步异常都能被下面的 catch 兜住并收起弹窗
 				uploadDialog.value = {
 					visible: true,
 					title: '票根智能识别',
@@ -805,10 +921,17 @@
 				recognizedStore.value = ''
 
 				try {
+					// 先压缩再上传，减小体积（长边超 1600px 等比缩小 + JPEG 0.8 质量）
+					const tempFilePath = await compressImage(chooseRes.tempFilePaths[0])
 					// 调用已封装好的 uploadAndVerifyTicket 方法（成功与核验未通过都 resolve）
-					const res = await uploadAndVerifyTicket(tempFilePath, {
-						city: currentLocation.value
-					})
+					// 加 30s 超时兜底：接口长时间无响应时不让弹窗一直转圈
+					const res = await withTimeout(
+						uploadAndVerifyTicket(tempFilePath, {
+							city: currentLocation.value
+						}),
+						30000,
+						'票根识别超时，请重试'
+					)
 
 					// 后端返回结构: { code, msg, data: { ocr_result: {...}, user_img_url } }
 					const ocr = res?.data?.ocr_result || {}
@@ -838,8 +961,8 @@
 						imageUrl: res?.data?.user_img_url || tempFilePath,
 						isValid,
 						infoRows,
-						// 未通过时展示拒绝原因
-						message: isValid ? '' : (ocr.reject_reason || res?.msg || '票根核验未通过'),
+						// 未通过时展示拒绝原因（后端 msg / message 字段都兼容）
+						message: isValid ? '' : (ocr.reject_reason || pickErrMsg(res) || '票根核验未通过'),
 						ticketInfo: isValid ? {
 						type: ocr.ticket_category || '票根',
 						discount: inner.amount > 0 ? `¥${Number(inner.amount).toFixed(2)}` : '专属折扣'
@@ -893,11 +1016,14 @@
 
 	function openShopDetail(shop) {
 		if (!shop || !shop.id) return
-		const name = encodeURIComponent(shop.name || shop.short_name || '')
-		const logo = encodeURIComponent(shop.logo || '')
-		// 先跳商家详情页，详情页内"优惠买单"再进优惠券列表
-		uni.navigateTo({
-			url: `/pages/shop/detail/detail?shop_id=${shop.id}&name=${name}&logo=${logo}`
+		// 连点会重复 navigateTo 压栈（H5 多页共存更明显），加 800ms 点击锁
+		withTapLock('shop-detail', 800, () => {
+			const name = encodeURIComponent(shop.name || shop.short_name || '')
+			const logo = encodeURIComponent(shop.logo || '')
+			// 先跳商家详情页，详情页内"优惠买单"再进优惠券列表
+			uni.navigateTo({
+				url: `/pages/shop/detail/detail?shop_id=${shop.id}&name=${name}&logo=${logo}`
+			})
 		})
 	}
 
@@ -920,9 +1046,12 @@
 
 	// 商家列表区 scroll-view 下拉刷新：只重拉商家列表（不打断分类/登录态）
 	async function onListRefresh() {
+		if (listRefreshing.value) return // 刷新动画进行中，忽略重复触发
 		const startAt = Date.now()
 		listRefreshing.value = true
 		try {
+			// 下拉时允许重试定位（用户可能刚刚授权了定位权限）
+			await ensureUserPosition(true)
 			await loadShops(false)
 		} finally {
 			// 保证展开态至少渲染一帧且可见 500ms，否则接口秒回时 true→false 同批次抵消，动画卡住不回弹
@@ -1511,6 +1640,18 @@
 		.region-scroll {
 			margin-top: 24rpx;
 			max-height: 55vh;
+		}
+
+		/* 地区列表加载失败：点击重试 */
+		.region-error {
+			margin-top: 60rpx;
+			padding: 40rpx;
+			text-align: center;
+			font-size: 24rpx;
+			color: #2563eb;
+			background: #f1f5f9;
+			border: 1rpx solid #e2e8f0;
+			border-radius: 16rpx;
 		}
 
 		.region-grid {

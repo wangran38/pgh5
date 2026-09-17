@@ -1,4 +1,4 @@
-import { baseURL } from '@/utils/request.js'
+import { baseURL, pickErrMsg } from '@/utils/request.js'
 
 /**
  * 统一图片上传接口
@@ -38,7 +38,7 @@ export function uploadImage(filePath) {
           if (data.code === 200 || data.code === 0 || data.error_code === 0) {
             resolve(data)
           } else {
-            reject(data.msg || data.message || '上传失败')
+            reject(pickErrMsg(data, '上传失败'))
           }
         } catch (e) {
           reject('解析响应数据失败')
