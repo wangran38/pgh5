@@ -140,6 +140,40 @@ export function editCoupon(data) {
 }
 
 /**
+ * 新增团购商品（B 端）
+ * 事务内保存产品主表 + SKU 规格 + 明细清单 + 核销规则 + 票根联运优惠。
+ * @param {Object} data
+ * @param {number} data.shop_id - 所属店铺 ID（必填）
+ * @param {string} data.title - 产品标题（必填）
+ * @param {string} [data.sub_title] - 副标题
+ * @param {string} data.cover_image - 产品主图 URL（必填）
+ * @param {string} [data.images] - 轮播图 URL 数组，JSON 字符串
+ * @param {string} data.biz_type - 业务类型：EAT吃 HOTEL住 TRAVEL行 TOUR游 SHOP购 FUN娱（必填）
+ * @param {string} data.product_type - 产品形态：SET_MEAL套餐 VOUCHER代金券 ROOM_NIGHT房晚 TICKET门票 TRANSFER接送机 RENTAL租车（必填）
+ * @param {number} data.original_price - 划线原价（必填）
+ * @param {number} data.selling_price - 团购价（必填）
+ * @param {number} data.total_stock - 总库存（必填）
+ * @param {number} [data.stock_type] - 1总库存（默认）2每日/场次动态库存
+ * @param {number} [data.valid_type] - 1指定时间段（默认）2购买后X天内有效
+ * @param {number} [data.valid_days] - valid_type=2 时生效
+ * @param {string} [data.valid_start] - YYYY-MM-DD HH:mm:ss
+ * @param {string} [data.valid_end] - YYYY-MM-DD HH:mm:ss
+ * @param {Array} [data.skus] - SKU 规格列表
+ * @param {Array} [data.items] - 产品明细清单
+ * @param {Object} [data.rule] - 核销/使用规则
+ * @param {Object} [data.ticket_discount] - 票根识别联动优惠配置
+ * 返回 data：{ product_id }
+ */
+export function addShopGoods(data = {}) {
+  const token = uni.getStorageSync('pgtoken') || ''
+  return post('/user/shop/goods/add', data, {
+    header: {
+      'pgtoken': token
+    }
+  })
+}
+
+/**
  * 获取商家列表
  * @param {Object} data
  */

@@ -33,6 +33,25 @@ export function getUserProfile() {
 }
 
 /**
+ * 我的优惠券列表（分页）
+ * 已领取/兑换成功的优惠券，以优惠券为主体，连表带出兑换该券所使用的票根记录。
+ * @param {Object} data
+ * @param {number} [data.page] - 页码，默认 1
+ * @param {number} [data.limit] - 每页数量，默认 10
+ * @param {string} [data.order] - 排序规则（预留，默认按兑换时间倒序）
+ * 返回 data：{ list, total, page, limit }
+ *   list[] = { ...票根字段(ticket_title/holder_name/event_date/...), coupon: { id, title, coupon_type, discount_amount, min_point, ... } }
+ */
+export function getUserCouponList(data = {}) {
+  const token = uni.getStorageSync('pgtoken') || ''
+  return post('/user/coupon/list', data, {
+    header: {
+      'pgtoken': token
+    }
+  })
+}
+
+/**
  * 获取我的票根列表（分页）
  * @param {Object} data
  */

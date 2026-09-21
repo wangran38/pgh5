@@ -21,7 +21,6 @@ export function uploadAndVerifyTicket(filePath, extraData = {}) {
   }
 
   const finalUrl = baseUrl + uploadPath
-  console.log('【DEBUG】最终票根核验完整URL: ', finalUrl)
 
   return new Promise((resolve, reject) => {
     uni.uploadFile({

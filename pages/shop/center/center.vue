@@ -45,6 +45,12 @@
           <text class="arrow">›</text>
         </view>
 
+        <view class="menu-item" @click="goToAddGoods">
+          <text class="icon">🛍</text>
+          <text class="text">添加团购商品</text>
+          <text class="arrow">›</text>
+        </view>
+
         <view class="menu-item" @click="goToPromo">
           <text class="icon">🧧</text>
           <text class="text">新增优惠卷</text>
@@ -177,6 +183,11 @@ function goToTickets() {
 
 function goToOrders() {
   uni.navigateTo({ url: '/pages/shop/order/order' })
+}
+
+function goToAddGoods() {
+  const query = shopId.value ? `?shop_id=${shopId.value}` : ''
+  uni.navigateTo({ url: `/pages/shop/goods/add${query}` })
 }
 
 function goToPromo() {

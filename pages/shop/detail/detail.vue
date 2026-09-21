@@ -35,26 +35,63 @@
         <text class="row-text">营业时间 {{ openingHours }}</text>
       </view>
 
-      <view v-if="description" class="desc-block">
-        <view class="desc-head">
-          <text class="row-icon">🏷</text>
-          <text class="desc-head-text">商户简介</text>
+      <!-- 商户简介 + 专享优惠：有团购时整块默认收起（给团购让位），点「查看全部」展开 -->
+      <view v-if="description || discounts" class="more-block">
+        <view v-if="moreExpanded" class="more-body">
+          <view v-if="description" class="desc-block">
+            <view class="desc-head">
+              <text class="row-icon">🏷</text>
+              <text class="desc-head-text">商户简介</text>
+            </view>
+            <view ref="descTextRef" class="desc-text" :class="{ collapsed: !descExpanded }" :style="descStyle">{{ description }}</view>
+            <!-- 无团购时保留简介自身的折叠；有团购时由外层统一折叠，避免两个「查看全部」 -->
+            <view v-if="!hasGroupon && (descOverflow || descExpanded)" class="desc-toggle" @click="descExpanded = !descExpanded">
+              <text>{{ descExpanded ? '收起' : '查看全部' }}</text>
+            </view>
+          </view>
+
+          <!-- 专享优惠 -->
+          <view v-if="discounts" class="benefit-box">
+            <view class="benefit-tag">✨ 专享优惠</view>
+            <scroll-view class="benefit-scroll" scroll-y :style="benefitStyle">
+              <text class="benefit-text">{{ discounts }}</text>
+            </scroll-view>
+          </view>
         </view>
-        <view ref="descTextRef" class="desc-text" :class="{ collapsed: !descExpanded }">{{ description }}</view>
-        <view v-if="descOverflow || descExpanded" class="desc-toggle" @click="descExpanded = !descExpanded">
-          <text>{{ descExpanded ? '收起' : '查看全部' }}</text>
+
+        <view v-if="hasGroupon" class="more-toggle" @click="moreExpanded = !moreExpanded">
+          <text>{{ moreExpanded ? '收起' : '查看全部' }}</text>
         </view>
       </view>
 
-      <!-- 专享优惠 -->
-      <view v-if="discounts" class="benefit-box">
-        <view class="benefit-tag">✨ 专享优惠</view>
-        <scroll-view class="benefit-scroll" scroll-y>
-          <text class="benefit-text">{{ discounts }}</text>
-        </scroll-view>
+      <!-- 有团购时隐藏「优惠买单」，团购卡片作为主要下单入口 -->
+      <button v-if="!hasGroupon" class="buy-btn" @click="goCoupons">优惠买单</button>
+    </view>
+
+    <!-- 团购（专属票价券）：有团购时上方信息卡自动收窄 -->
+    <view v-if="grouponList.length" class="groupon-section">
+      <view class="section-head">
+        <text class="section-title">团购</text>
+        <text class="section-sub">到店出示核销码使用</text>
       </view>
 
-      <button class="buy-btn" @click="goCoupons">优惠买单</button>
+      <view v-for="g in grouponList" :key="g.id" class="groupon-card" @click="buyGroupon(g)">
+        <view class="g-main">
+          <text class="g-title">{{ g.title || '团购套餐' }}</text>
+          <view class="g-tags">
+            <text class="g-tag warn">不可退款</text>
+            <text class="g-tag link" @click.stop="showNotice">购票须知</text>
+          </view>
+        </view>
+        <view class="g-right">
+          <view class="g-price">
+            <text class="g-symbol">¥</text>
+            <text class="g-num">{{ grouponPrice(g) }}</text>
+            <text class="g-qi">起</text>
+          </view>
+          <button class="g-buy" @click.stop="buyGroupon(g)">购买</button>
+        </view>
+      </view>
     </view>
   </view>
 </template>
@@ -63,6 +100,7 @@
 import { ref, computed, nextTick } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { getShopCoupons } from '@/api/shop.js'
+import { createOrder } from '@/api/order.js'
 
 const shopId = ref(null)
 const shopName = ref('')
@@ -93,6 +131,91 @@ const latitude = computed(() => Number(shopInfo.value.latitude) || 0)
 const longitude = computed(() => Number(shopInfo.value.longitude) || 0)
 const hasPosition = computed(() => !!latitude.value && !!longitude.value)
 
+// ===== 团购 =====
+// ⚠️ 当前为本地演示数据（后端团购接口尚未提供），禁止用于真实下单。
+// 接入真实接口后：把 grouponList 换成接口返回数组（每项含 id / title / price）
+// 即可，下方价格读取与购买下单逻辑无需改动。
+const MOCK_GROUPON = [
+  { id: 900001, title: '沂蒙山龟蒙景区成人票 + 往返观光车沂蒙山龟蒙景区成人票 + 往返观光车沂蒙山龟蒙景区成人票 + 往返观光车沂蒙山龟蒙景区成人票 + 往返观光车', price: 690 },
+  { id: 900002, title: '沂蒙山龟蒙景区亲子套票（2 大 1 小）', price: 1280 },
+  { id: 900003, title: '景区全程讲解服务（约 3 小时）', price: 199 }
+]
+// __mock 标记：演示数据点击购买只提示，不会调用下单接口
+const grouponList = ref(MOCK_GROUPON.map((i) => ({ ...i, __mock: true })))
+// 有团购时上方信息卡收窄（简介/专享优惠整块收起），让团购尽快露出
+const hasGroupon = computed(() => grouponList.value.length > 0)
+// 简介 + 专享优惠的整块展开态：有团购默认收起，无团购默认展开
+const moreExpanded = ref(!hasGroupon.value)
+// 折叠高度：仅在无团购时生效（有团购时由外层 more-block 整块收起）
+const descStyle = computed(() => {
+  if (hasGroupon.value) return {}
+  return descExpanded.value ? {} : { maxHeight: '252rpx' }
+})
+const benefitStyle = computed(() => (hasGroupon.value ? {} : { maxHeight: '252rpx' }))
+
+// 价格：真实数据取 price（或券面额 discount_amount / amount），演示数据取 price
+function grouponPrice(c) {
+  const v = c.price != null ? c.price : c.discount_amount ?? c.amount
+  return Number(Number(v || 0).toFixed(2))
+}
+
+// 购买团购：确认后创建订单（带 coupon_id 供商家核销），进入收银台完成支付
+function buyGroupon(g) {
+  // 演示数据：不发请求，避免生成无效订单
+  if (g.__mock) {
+    uni.showToast({ title: '团购接口待接入，当前为演示数据', icon: 'none' })
+    return
+  }
+  const price = grouponPrice(g)
+  if (!(price > 0)) {
+    uni.showToast({ title: '该团购价格异常，请联系商家', icon: 'none' })
+    return
+  }
+  uni.showModal({
+    title: '确认购买',
+    content: `${g.title || '团购套餐'}  ¥${price}`,
+    success: async (r) => {
+      if (!r.confirm) return
+      uni.showLoading({ title: '下单中...', mask: true })
+      const res = await createOrder({
+        shop_id: Number(shopId.value),
+        coupon_id: Number(g.id),
+        amount: price,
+        discount_amount: 0,
+        payable_amount: price
+      })
+      uni.hideLoading()
+      if (!res) return // 失败已由 request.js 统一提示
+      const data = res.data || {}
+      const order = data.order || data
+      const oid = order.id ?? order.order_id
+      const ono = order.order_no || order.orderNo || ''
+      if (!oid) {
+        uni.showToast({ title: '下单失败，请重试', icon: 'none' })
+        return
+      }
+      uni.redirectTo({
+        url:
+          '/pages/users/pay/pay?order_id=' + oid +
+          '&order_no=' + encodeURIComponent(ono) +
+          '&amount=' + price +
+          '&total=' + price +
+          '&discount=0' +
+          '&shop_name=' + encodeURIComponent(shopInfo.value.name || shopName.value || '')
+      })
+    }
+  })
+}
+
+// 购票须知
+function showNotice() {
+  uni.showModal({
+    title: '购票须知',
+    content: '1. 团购票一经售出不可退款；\n2. 请在有效期内到店使用；\n3. 到店出示核销码，由商家扫码核销。',
+    showCancel: false
+  })
+}
+
 // cover_images/logo 为逗号分隔字符串，取第一张
 function firstImage(str) {
   return String(str || '').split(',')[0].trim()
@@ -114,7 +237,7 @@ function safeDecode(s) {
   }
 }
 
-// 复用 /shop/coupons：limit=1 只为拿 data.shop 回显
+// 复用 /shop/coupons：limit=1 只为拿 data.shop 回显（团购目前用本地演示数据）
 async function loadShop() {
   const res = await getShopCoupons({ shop_id: shopId.value, page: 1, limit: 1 })
   if (res && res.data && res.data.shop) {
@@ -305,6 +428,23 @@ onLoad((query) => {
   }
 }
 
+/* 有团购时的整块展开/收起开关 */
+.more-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 28rpx;
+  padding: 12rpx 0;
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #2563eb;
+
+  .more-arrow {
+    margin-left: 8rpx;
+    font-size: 24rpx;
+  }
+}
+
 /* 专享优惠：红色描边票框 */
 .benefit-box {
   position: relative;
@@ -354,6 +494,130 @@ onLoad((query) => {
 
   &::after {
     border: none;
+  }
+}
+
+/* ===== 团购区块 ===== */
+.groupon-section {
+  margin: 28rpx 24rpx 0;
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    padding: 8rpx 4rpx 20rpx;
+
+    .section-title {
+      font-size: 34rpx;
+      font-weight: 900;
+      color: #0f172a;
+      margin-right: 16rpx;
+    }
+
+    .section-sub {
+      font-size: 22rpx;
+      color: #94a3b8;
+    }
+  }
+}
+
+.groupon-card {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 26rpx;
+  margin-bottom: 20rpx;
+  box-shadow: 0 2rpx 10rpx rgba(15, 23, 42, 0.05);
+
+  .g-main {
+    flex: 1;
+    min-width: 0;
+    margin-right: 20rpx;
+
+    .g-title {
+      /* 最多两行，超出省略：line-clamp 为标准属性，-webkit- 前缀供 webkit 内核使用 */
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      word-break: break-all;
+      font-size: 30rpx;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1.5;
+    }
+
+    .g-tags {
+      display: flex;
+      align-items: center;
+      margin-top: 14rpx;
+
+      .g-tag {
+        font-size: 20rpx;
+        padding: 4rpx 14rpx;
+        border-radius: 6rpx;
+        margin-right: 16rpx;
+      }
+
+      .warn {
+        color: #ff2d55;
+        border: 1rpx solid #ffc9d4;
+        background: #fff5f7;
+      }
+
+      .link {
+        color: #2563eb;
+      }
+    }
+  }
+
+  .g-right {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+
+    .g-price {
+      display: flex;
+      align-items: baseline;
+      color: #ff6a00;
+
+      .g-symbol {
+        font-size: 24rpx;
+        font-weight: 800;
+      }
+
+      .g-num {
+        font-size: 44rpx;
+        font-weight: 900;
+        line-height: 1.1;
+      }
+
+      .g-qi {
+        font-size: 22rpx;
+        margin-left: 4rpx;
+      }
+    }
+
+    .g-buy {
+      margin: 16rpx 0 0;
+      width: 150rpx;
+      height: 64rpx;
+      line-height: 64rpx;
+      border-radius: 12rpx;
+      padding: 0;
+      background: linear-gradient(90deg, #ff9500, #ff6a00);
+      color: #fff;
+      font-size: 28rpx;
+      font-weight: 800;
+      border: none;
+
+      &::after {
+        border: none;
+      }
+    }
   }
 }
 </style>
