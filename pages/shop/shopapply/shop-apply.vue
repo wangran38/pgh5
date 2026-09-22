@@ -165,6 +165,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { getShopCategories, applyShop, getShopApplyStatus } from '@/api/shop.js'
 import { getCitiesByPid } from '@/api/city.js'
+import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 
 // 表单数据模型
 const formData = ref({
@@ -181,8 +182,6 @@ const formData = ref({
   discounts: '',
   description: ''
 })
-
-const submitting = ref(false)
 
 // 申请状态相关变量
 const hasLoadedStatus = ref(false)   // 是否已完成状态请求
@@ -400,8 +399,22 @@ function extractListData(res) {
   return []
 }
 
-// 提交申请表单
-async function submitApply() {
+// 提交接口调用（不含校验）：由 useSubmit 统一加锁防重复
+async function doSubmitApply() {
+  const res = await applyShop(formData.value)
+  if (!res) return // 失败已由 request.js 统一提示
+
+  uni.showToast({ title: '提交成功，请等待审核', icon: 'success' })
+  setTimeout(() => {
+    checkShopApplyStatus() // 提交成功后重新校验状态，切换为状态展示视图
+  }, 1500)
+}
+
+// 统一防重复提交：submitting 绑定到按钮 :loading
+const { loading: submitting, submit: doApply } = useSubmit(doSubmitApply, { cooldown: 1600 })
+
+// 提交申请表单：校验置于锁外，失败不占用冷却，可立即修正重试
+function submitApply() {
   const token = uni.getStorageSync('pgtoken')
   if (!token) {
     uni.showToast({ title: '请先登录后再提交申请', icon: 'none' })
@@ -417,15 +430,7 @@ async function submitApply() {
   }
   if (!formData.value.address) return uni.showToast({ title: '请输入详细经营地址', icon: 'none' })
 
-  submitting.value = true
-  const res = await applyShop(formData.value)
-  submitting.value = false
-  if (!res) return // 失败已由 request.js 统一提示
-
-  uni.showToast({ title: '提交成功，请等待审核', icon: 'success' })
-  setTimeout(() => {
-    checkShopApplyStatus() // 提交成功后重新校验状态，切换为状态展示视图
-  }, 1500)
+  doApply()
 }
 
 onMounted(() => {

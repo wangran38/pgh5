@@ -51,7 +51,7 @@
 		<!-- 票根识别快捷通告 -->
 		<view class="notice-bar" @click="uploadTicket">
 			<view class="notice-tag">福利</view>
-			<text class="notice-text">拿任意高铁/门票/酒店票根，最高可抵扣 60 元</text>
+			<text class="notice-text">拿任意高铁/门票/酒店票根，享更多权益更多优惠</text>
 			<text class="notice-arrow">去识别 ›</text>
 		</view>
 
@@ -86,7 +86,7 @@
 						{{ recognizedStore ? `已匹配: ${recognizedStore}` : (activeCategory ? `专区 · ${getCategoryName(activeCategory)}` : `${currentLocation} · 热门票根优惠店`) }}
 					</text>
 				</view>
-				<text class="sub-tip">凭票根到店即享</text>
+				<text class="sub-tip" @click="goMore">更多 ›</text>
 			</view>
 
 			<!-- 商家推荐列表 -->
@@ -312,6 +312,7 @@
 	import {
 		pickErrMsg
 	} from '@/utils/request.js' // 后端错误字段兼容（msg / message）
+	import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 
 	// ===== 通用兜底工具 =====
 	// 超时兜底：接口长时间无响应时按失败处理，避免弹窗/列表 loading 一直转圈
@@ -831,7 +832,7 @@
 				const res = await getShopList(params)
 				// 已有更新的请求在跑，丢弃本次过期响应
 				if (seq !== shopsSeq) return
-				shopList.value = extractListData(res)
+				shopList.value = extractListData(res).slice(0, 20)
 			} catch (e) {
 				// 异常兜底：不让"商家加载中..."卡死，回退空态（提示已由 request.js 统一给出）
 				console.error('商家列表加载异常:', e)
@@ -889,22 +890,47 @@
 		loadShops()
 	}
 
+	// 推荐列表「更多」：跳转到分类列表页，带上当前选中的 category-grid 分类
+	function goMore() {
+		const params = []
+		if (activeCategory.value) {
+			const id = getCategoryId(activeCategory.value)
+			const name = encodeURIComponent(getCategoryName(activeCategory.value))
+			// 0 视为「全部」，不传分类
+			if (id) {
+				params.push(`category_id=${id}`)
+				params.push(`name=${name}`)
+			}
+		}
+		withTapLock('go-more', 800, () => {
+			uni.navigateTo({
+				url: `/pages/shop/shoplist/shoplist${params.length ? '?' + params.join('&') : ''}`
+			})
+		})
+	}
+
 // ... 省略前面未改动代码 ...
 
 	// 使用从 api/ticket.js 中导入的 uploadAndVerifyTicket 方法进行票根验证
 // 使用从 api/ticket.js 中导入的 uploadAndVerifyTicket 方法进行票根验证
 // 使用从 api/ticket.js 中导入的 uploadAndVerifyTicket 方法进行票根验证
 // 使用从 api/ticket.js 中导入的 uploadAndVerifyTicket 方法进行票根验证
+	// 票根上传入口：未登录先弹登录；已登录走提交锁，防止连点弹出多个选择器
 	function uploadTicket() {
 		if (!isLoggedIn.value) {
 			loginModalVisible.value = true
 			return
 		}
+		runUploadTicket()
+	}
 
+	// 票根上传识别的异步实现：整体处于提交锁内（选图 + 压缩 + 上传）
+	const runUploadTicketImpl = () => new Promise((resolve) => {
 		uni.chooseImage({
 			count: 1,
 			sizeType: ['compressed'],
 			sourceType: ['album', 'camera'],
+			fail: resolve,
 			success: async (chooseRes) => {
 				// 先进入 loading 态再压缩上传：压缩/上传任一步异常都能被下面的 catch 兜住并收起弹窗
 				uploadDialog.value = {
@@ -978,9 +1004,14 @@
 						icon: 'none'
 					})
 				}
+				// 识别流程结束（成功或失败），释放提交锁
+				resolve()
 			}
 		})
-	}
+	})
+
+	// 统一防重复提交：识别过程中（含 30s 超时）忽略再次点击，冷却期兜底
+	const { submit: runUploadTicket } = useSubmit(runUploadTicketImpl, { cooldown: 1000 })
 
 	// 点击弹窗中的票根图片放大预览
 	function previewTicketImage() {
@@ -1420,8 +1451,9 @@
 		}
 
 		.sub-tip {
-			font-size: 20rpx;
-			color: #94a3b8;
+			font-size: 22rpx;
+			color: #2563eb;
+			font-weight: 600;
 		}
 	}
 

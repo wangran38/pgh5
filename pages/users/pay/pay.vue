@@ -63,6 +63,7 @@ import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { PAY_TYPE, payTypeText, updateOrderPayType } from '@/api/order.js'
 import { pay, PAY_CHANNELS } from '@/utils/payment.js'
+import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 
 // 两种方式的差别只在付款环节：在线支付当场付，到店付现下单后线下结算，
 // 二者后续都由商家核销（票根/优惠券），见 api/order.js PAY_TYPE
@@ -79,7 +80,6 @@ const totalAmount = ref(0)
 const discountAmount = ref(0)
 
 const payType = ref(PAY_TYPE.ONLINE)
-const submitting = ref(false)
 
 onLoad((query) => {
   const q = query || {}
@@ -99,28 +99,17 @@ function safeDecode(s) {
   }
 }
 
-// 确认：先记账本单支付方式，再按方式走付款或线下结算
-async function onConfirm() {
-  if (submitting.value) return
-  if (!orderNo.value) {
-    uni.showToast({ title: '订单信息缺失，请返回重试', icon: 'none' })
-    return
-  }
-  submitting.value = true
-
+// 确认支付接口调用（不含校验）：由 useSubmit 统一加锁防重复
+async function confirmPay() {
   // 1. 告知后端本单采用的支付方式（按订单号记账）
   const res = await updateOrderPayType({
     order_no: orderNo.value,
     pay_type: Number(payType.value)
   })
-  if (!res) {
-    submitting.value = false
-    return // 失败已由 request.js 统一提示
-  }
+  if (!res) return // 失败已由 request.js 统一提示
 
   // 2a. 到店付现：跳出示核销码页，商家扫码核销后完成
   if (payType.value === PAY_TYPE.CASH) {
-    submitting.value = false
     uni.redirectTo({
       url:
         '/pages/users/order/qrcode?order_no=' + encodeURIComponent(orderNo.value) +
@@ -136,7 +125,6 @@ async function onConfirm() {
   const channel = await choosePayChannel()
   if (!channel) {
     uni.showToast({ title: '已保留订单，可在「我的订单」继续支付', icon: 'none' })
-    submitting.value = false
     return
   }
 
@@ -155,9 +143,19 @@ async function onConfirm() {
     } else {
       uni.showToast({ title: (e && e.message) || '支付失败', icon: 'none' })
     }
-  } finally {
-    submitting.value = false
   }
+}
+
+// 统一防重复提交：submitting 绑定到按钮 :disabled
+const { loading: submitting, submit: doConfirm } = useSubmit(confirmPay, { cooldown: 1000 })
+
+// 确认入口：校验置于锁外，失败不占用冷却
+function onConfirm() {
+  if (!orderNo.value) {
+    uni.showToast({ title: '订单信息缺失，请返回重试', icon: 'none' })
+    return
+  }
+  doConfirm()
 }
 
 // 完成后回到订单列表：从订单页进来就直接返回（列表 onShow 会自动刷新），

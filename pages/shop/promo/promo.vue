@@ -103,6 +103,7 @@
 import { ref, computed } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { addCoupon, editCoupon } from '@/api/shop.js'
+import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 
 const categoryOptions = [
   { id: 1, name: '景区' },
@@ -135,7 +136,6 @@ const form = ref({
 })
 
 const selectedCategories = ref([])
-const submitting = ref(false)
 
 const pageTitle = computed(() => (isEdit.value ? '编辑优惠券' : '新增优惠券'))
 const pageSubtitle = computed(() =>
@@ -252,10 +252,8 @@ function validate() {
   return true
 }
 
-async function handleSubmit() {
-  if (!validate()) return
-  submitting.value = true
-
+// 提交接口调用（不含校验）：由 useSubmit 统一加锁防重复
+async function submitCoupon() {
   const payload = {
     title: form.value.title.trim(),
     categories: [...selectedCategories.value].sort((a, b) => a - b),
@@ -269,11 +267,19 @@ async function handleSubmit() {
   if (form.value.end_time) payload.end_time = form.value.end_time
 
   const res = isEdit.value ? await editCoupon(payload) : await addCoupon(payload)
-  submitting.value = false
   if (!res) return // 失败已由 request.js 统一提示
 
   uni.showToast({ title: isEdit.value ? '保存成功' : '提交成功', icon: 'success' })
   setTimeout(() => uni.navigateBack(), 1000)
+}
+
+// 统一防重复提交：submitting 绑定到按钮 :loading
+const { loading: submitting, submit: doSubmit } = useSubmit(submitCoupon, { cooldown: 1300 })
+
+// 提交入口：校验置于锁外，失败不占用冷却，可立即修正重试
+function handleSubmit() {
+  if (!validate()) return
+  doSubmit()
 }
 </script>
 

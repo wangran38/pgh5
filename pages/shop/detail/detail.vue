@@ -72,24 +72,26 @@
     <view v-if="grouponList.length" class="groupon-section">
       <view class="section-head">
         <text class="section-title">团购</text>
-        <text class="section-sub">到店出示核销码使用</text>
+        <text class="section-sub">点击查看详情 / 选规格下单</text>
       </view>
 
-      <view v-for="g in grouponList" :key="g.id" class="groupon-card" @click="buyGroupon(g)">
+      <view v-for="g in grouponList" :key="g.id" class="groupon-card" @click="goGoodsDetail(g)">
+        <image class="g-cover" :src="g.cover_image || ''" mode="aspectFill" />
+
         <view class="g-main">
           <text class="g-title">{{ g.title || '团购套餐' }}</text>
+          <text v-if="g.sub_title" class="g-sub">{{ g.sub_title }}</text>
           <view class="g-tags">
-            <text class="g-tag warn">不可退款</text>
-            <text class="g-tag link" @click.stop="showNotice">购票须知</text>
+            <text class="g-tag">已售 {{ g.sales_count || 0 }}</text>
           </view>
         </view>
+
         <view class="g-right">
           <view class="g-price">
             <text class="g-symbol">¥</text>
             <text class="g-num">{{ grouponPrice(g) }}</text>
-            <text class="g-qi">起</text>
           </view>
-          <button class="g-buy" @click.stop="buyGroupon(g)">购买</button>
+          <button class="g-buy" @click.stop="goGoodsDetail(g)">购买</button>
         </view>
       </view>
     </view>
@@ -99,8 +101,9 @@
 <script setup>
 import { ref, computed, nextTick } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getShopCoupons } from '@/api/shop.js'
+import { getShopCoupons, getShopGoodsPublic } from '@/api/shop.js'
 import { createOrder } from '@/api/order.js'
+import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 
 const shopId = ref(null)
 const shopName = ref('')
@@ -131,17 +134,8 @@ const latitude = computed(() => Number(shopInfo.value.latitude) || 0)
 const longitude = computed(() => Number(shopInfo.value.longitude) || 0)
 const hasPosition = computed(() => !!latitude.value && !!longitude.value)
 
-// ===== 团购 =====
-// ⚠️ 当前为本地演示数据（后端团购接口尚未提供），禁止用于真实下单。
-// 接入真实接口后：把 grouponList 换成接口返回数组（每项含 id / title / price）
-// 即可，下方价格读取与购买下单逻辑无需改动。
-const MOCK_GROUPON = [
-  { id: 900001, title: '沂蒙山龟蒙景区成人票 + 往返观光车沂蒙山龟蒙景区成人票 + 往返观光车沂蒙山龟蒙景区成人票 + 往返观光车沂蒙山龟蒙景区成人票 + 往返观光车', price: 690 },
-  { id: 900002, title: '沂蒙山龟蒙景区亲子套票（2 大 1 小）', price: 1280 },
-  { id: 900003, title: '景区全程讲解服务（约 3 小时）', price: 199 }
-]
-// __mock 标记：演示数据点击购买只提示，不会调用下单接口
-const grouponList = ref(MOCK_GROUPON.map((i) => ({ ...i, __mock: true })))
+// ===== 团购（公开商品列表，仅已上架）=====
+const grouponList = ref([])
 // 有团购时上方信息卡收窄（简介/专享优惠整块收起），让团购尽快露出
 const hasGroupon = computed(() => grouponList.value.length > 0)
 // 简介 + 专享优惠的整块展开态：有团购默认收起，无团购默认展开
@@ -153,14 +147,20 @@ const descStyle = computed(() => {
 })
 const benefitStyle = computed(() => (hasGroupon.value ? {} : { maxHeight: '252rpx' }))
 
-// 价格：真实数据取 price（或券面额 discount_amount / amount），演示数据取 price
+// 价格：真实商品取 selling_price；券/兼容数据回落 price / discount_amount / amount
 function grouponPrice(c) {
-  const v = c.price != null ? c.price : c.discount_amount ?? c.amount
+  const v =
+    c.selling_price != null
+      ? c.selling_price
+      : c.price != null
+        ? c.price
+        : c.discount_amount ?? c.amount
   return Number(Number(v || 0).toFixed(2))
 }
 
 // 购买团购：确认后创建订单（带 coupon_id 供商家核销），进入收银台完成支付
-function buyGroupon(g) {
+// 内部实现（不含锁），由下方 useSubmit 包装出对外的 buyGroupon
+function buyGrouponInner(g) {
   // 演示数据：不发请求，避免生成无效订单
   if (g.__mock) {
     uni.showToast({ title: '团购接口待接入，当前为演示数据', icon: 'none' })
@@ -207,6 +207,16 @@ function buyGroupon(g) {
   })
 }
 
+// 对外暴露的购买入口：统一防重复提交（避免连点弹出多个确认框 / 重复下单）
+const { submit: buyGroupon } = useSubmit(buyGrouponInner, { cooldown: 1200 })
+
+// 点击团购卡片 → 进入商品详情页（选规格 / 下单在详情页完成）
+function goGoodsDetail(g) {
+  const id = g && g.id
+  if (!id) return
+  uni.navigateTo({ url: `/pages/shop/goods/detail?id=${id}` })
+}
+
 // 购票须知
 function showNotice() {
   uni.showModal({
@@ -237,7 +247,7 @@ function safeDecode(s) {
   }
 }
 
-// 复用 /shop/coupons：limit=1 只为拿 data.shop 回显（团购目前用本地演示数据）
+// 复用 /shop/coupons：limit=1 只为拿 data.shop 回显
 async function loadShop() {
   const res = await getShopCoupons({ shop_id: shopId.value, page: 1, limit: 1 })
   if (res && res.data && res.data.shop) {
@@ -245,6 +255,15 @@ async function loadShop() {
     if (shopInfo.value.name) uni.setNavigationBarTitle({ title: shopInfo.value.name })
     checkDescOverflow()
   }
+}
+
+// 团购商品列表（公开接口，仅已上架）；失败/为空时 grouponList 保持 []，自动降级
+async function loadGoods() {
+  const res = await getShopGoodsPublic({ shop_id: shopId.value, status: 2, page: 1, limit: 20 })
+  const list = res && res.data && Array.isArray(res.data.list) ? res.data.list : []
+  grouponList.value = list
+  // 有团购时信息卡默认收起（moreExpanded 初始按"无团购"计算，数据到达后需同步）
+  moreExpanded.value = !hasGroupon.value
 }
 
 // 判断简介是否超出折叠高度（max-height 裁切），超出才显示"查看全部"。
@@ -309,7 +328,10 @@ onLoad((query) => {
   shopName.value = query && query.name ? safeDecode(query.name) : ''
   shopLogo.value = query && query.logo ? safeDecode(query.logo) : ''
   if (shopName.value) uni.setNavigationBarTitle({ title: shopName.value })
-  if (shopId.value) loadShop()
+  if (shopId.value) {
+    loadShop()
+    loadGoods()
+  }
 })
 </script>
 
@@ -529,6 +551,16 @@ onLoad((query) => {
   margin-bottom: 20rpx;
   box-shadow: 0 2rpx 10rpx rgba(15, 23, 42, 0.05);
 
+  /* 封面：必须给定尺寸，否则 uni-image 默认 320×240 会把卡片撑爆、文字被挤成竖排 */
+  .g-cover {
+    width: 160rpx;
+    height: 160rpx;
+    border-radius: 16rpx;
+    background: #e2e8f0;
+    flex-shrink: 0;
+    margin-right: 20rpx;
+  }
+
   .g-main {
     flex: 1;
     min-width: 0;
@@ -549,6 +581,16 @@ onLoad((query) => {
       line-height: 1.5;
     }
 
+    .g-sub {
+      display: block;
+      margin-top: 8rpx;
+      font-size: 22rpx;
+      color: #64748b;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
     .g-tags {
       display: flex;
       align-items: center;
@@ -556,6 +598,8 @@ onLoad((query) => {
 
       .g-tag {
         font-size: 20rpx;
+        color: #64748b;
+        background: #f1f5f9;
         padding: 4rpx 14rpx;
         border-radius: 6rpx;
         margin-right: 16rpx;

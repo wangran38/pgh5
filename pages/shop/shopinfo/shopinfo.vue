@@ -144,7 +144,7 @@
     <view class="footer-actions">
       <button v-if="currentTab > 0" class="sub-btn prev-btn" @click="currentTab--">上一步</button>
       <button v-if="currentTab < 3" class="submit-btn next-btn" @click="currentTab++">下一步</button>
-      <button v-if="currentTab === 3" class="submit-btn save-btn" @click="handleSubmit">保存全部修改</button>
+      <button v-if="currentTab === 3" class="submit-btn save-btn" :disabled="saving" :loading="saving" @click="handleSubmit">保存全部修改</button>
     </view>
   </view>
 </template>
@@ -155,6 +155,7 @@ import { onLoad } from '@dcloudio/uni-app'
 import { getShopInfo, editShop } from '@/api/shop.js'
 import { uploadImage } from '@/api/upload.js' // 正确引入封装好的上传接口
 import { compressImage } from '@/utils/compressImage.js' // 上传前图片压缩
+import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 
 const currentTab = ref(0)
 
@@ -245,63 +246,72 @@ const chooseLocationOnMap = () => {
   })
 }
 
-// 单个上传 Logo 对接接口
-const uploadLogo = () => {
-  uni.chooseImage({
-    count: 1,
-    sizeType: ['compressed'],
-    success: async (res) => {
-      try {
-        uni.showLoading({ title: 'LOGO上传中...' })
-        // 上传前压缩，减小体积
-        const filePath = await compressImage(res.tempFilePaths[0])
-        const uploadRes = await uploadImage(filePath)
-        uni.hideLoading()
-
-        // 适配后端返回的 URL 路径结构
-        const imgUrl = uploadRes.data?.url || uploadRes.data?.urls?.[0] || uploadRes.url
-        if (imgUrl) {
-          form.logo = imgUrl
-        } else {
-          uni.showToast({ title: '获取图片链接失败', icon: 'none' })
-        }
-      } catch (err) {
-        uni.hideLoading()
-        uni.showToast({ title: typeof err === 'string' ? err : '上传失败', icon: 'none' })
-      }
-    }
+// 选图并返回临时路径（Promise 化），使「选图 + 上传」整体处于提交锁内
+function pickImagePaths(count) {
+  return new Promise((resolve) => {
+    uni.chooseImage({
+      count,
+      sizeType: ['compressed'],
+      success: (res) => resolve(res.tempFilePaths || []),
+      fail: () => resolve([])
+    })
   })
 }
 
-// 多图环境照上传对接接口（支持并发批量上传并回显）
-const uploadCoverImages = () => {
+// 单个上传 Logo（真正调用接口，由 useSubmit 加锁防重复）
+const doUploadLogo = async () => {
+  const paths = await pickImagePaths(1)
+  if (!paths.length) return
+  try {
+    uni.showLoading({ title: 'LOGO上传中...' })
+    // 上传前压缩，减小体积
+    const filePath = await compressImage(paths[0])
+    const uploadRes = await uploadImage(filePath)
+    uni.hideLoading()
+
+    // 适配后端返回的 URL 路径结构
+    const imgUrl = uploadRes.data?.url || uploadRes.data?.urls?.[0] || uploadRes.url
+    if (imgUrl) {
+      form.logo = imgUrl
+    } else {
+      uni.showToast({ title: '获取图片链接失败', icon: 'none' })
+    }
+  } catch (err) {
+    uni.hideLoading()
+    uni.showToast({ title: typeof err === 'string' ? err : '上传失败', icon: 'none' })
+  }
+}
+
+// 多图环境照上传（支持并发批量上传并回显，真正调用接口，由 useSubmit 加锁防重复）
+const doUploadCoverImages = async () => {
   const remainCount = 5 - coverImageList.value.length
   if (remainCount <= 0) return
 
-  uni.chooseImage({
-    count: remainCount,
-    sizeType: ['compressed'],
-    success: async (res) => {
-      uni.showLoading({ title: '图片上传中...' })
-      try {
-        // 逐张压缩后并发上传
-        const uploadPromises = res.tempFilePaths.map(async (filePath) => {
-          const compressed = await compressImage(filePath)
-          return uploadImage(compressed)
-        })
-        const results = await Promise.all(uploadPromises)
+  const paths = await pickImagePaths(remainCount)
+  if (!paths.length) return
 
-        uni.hideLoading()
+  uni.showLoading({ title: '图片上传中...' })
+  try {
+    // 逐张压缩后并发上传
+    const uploadPromises = paths.map(async (filePath) => {
+      const compressed = await compressImage(filePath)
+      return uploadImage(compressed)
+    })
+    const results = await Promise.all(uploadPromises)
 
-        const newUrls = results.map(item => item.data?.url || item.data?.urls?.[0] || item.url).filter(Boolean)
-        coverImageList.value = [...coverImageList.value, ...newUrls]
-      } catch (err) {
-        uni.hideLoading()
-        uni.showToast({ title: '部分图片上传失败', icon: 'none' })
-      }
-    }
-  })
+    uni.hideLoading()
+
+    const newUrls = results.map(item => item.data?.url || item.data?.urls?.[0] || item.url).filter(Boolean)
+    coverImageList.value = [...coverImageList.value, ...newUrls]
+  } catch (err) {
+    uni.hideLoading()
+    uni.showToast({ title: '部分图片上传失败', icon: 'none' })
+  }
 }
+
+// 统一防重复提交：避免连点弹出多个选择器 / 重复上传
+const { submit: uploadLogo } = useSubmit(doUploadLogo, { cooldown: 800 })
+const { submit: uploadCoverImages } = useSubmit(doUploadCoverImages, { cooldown: 800 })
 
 const removeCoverImage = (index) => {
   const list = [...coverImageList.value]
@@ -313,18 +323,27 @@ const previewImage = (current) => {
   uni.previewImage({ current, urls: [current] })
 }
 
-const handleSubmit = async () => {
-  if (!form.name) return uni.showToast({ title: '请填写门店名称', icon: 'none' })
-  if (!form.contact_phone) return uni.showToast({ title: '请填写联系电话', icon: 'none' })
-  if (!form.address) return uni.showToast({ title: '请完善详细地址与定位', icon: 'none' })
-
+// 保存接口调用（不含校验）：由 useSubmit 统一加锁防重复
+async function saveShop() {
   uni.showLoading({ title: '保存中...' })
   const res = await editShop(form)
   uni.hideLoading()
   if (!res) return // 失败已由 request.js 统一提示
 
   uni.showToast({ title: '修改成功', icon: 'success' })
+  // 成功后延迟 1.5s 跳转，冷却期需覆盖该窗口
   setTimeout(() => { uni.navigateBack() }, 1500)
+}
+
+// 统一防重复提交：saving 绑定到按钮 :disabled / :loading
+const { loading: saving, submit: submitSave } = useSubmit(saveShop, { cooldown: 1600 })
+
+// 校验置于提交锁之外：校验不通过不占用锁与冷却期，用户可立即修正重试
+function handleSubmit() {
+  if (!form.name) return uni.showToast({ title: '请填写门店名称', icon: 'none' })
+  if (!form.contact_phone) return uni.showToast({ title: '请填写联系电话', icon: 'none' })
+  if (!form.address) return uni.showToast({ title: '请完善详细地址与定位', icon: 'none' })
+  submitSave()
 }
 </script>
 

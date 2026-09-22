@@ -17,50 +17,33 @@
       <text class="desc-text">{{ statusDesc }}</text>
     </view>
 
-    <!-- 功能菜单 -->
-    <view class="menu-card">
-      <!-- <view class="menu-item" @click="goToApply">
-        <text class="icon">📝</text>
-        <text class="text">入驻申请</text>
-        <text class="sub-text">{{ hasApplied ? '查看/修改' : '立即入驻' }}</text>
-        <text class="arrow">›</text>
-      </view> -->
+    <!-- 常用功能（高频 4 项放大图标，其余收进下方列表） -->
+    <view v-if="canManageShop" class="quick-card">
+      <text class="section-title">常用功能</text>
+      <view class="quick-grid">
+        <view v-for="q in QUICK_ITEMS" :key="q.text" class="quick-item" @click="onQuick(q)">
+          <view class="quick-icon">{{ q.icon }}</view>
+          <text class="quick-text">{{ q.text }}</text>
+        </view>
+      </view>
+    </view>
 
+    <!-- 功能菜单（次要功能） -->
+    <view class="menu-card">
       <template v-if="canManageShop">
+        <text class="section-title">店铺管理</text>
+
         <view class="menu-item" @click="goToShopInfo">
           <text class="icon">📋</text>
           <text class="text">店铺资料管理</text>
           <text class="arrow">›</text>
         </view>
 
-        <view class="menu-item" @click="goToTickets">
-          <text class="icon">🎫</text>
-          <text class="text">核销中心</text>
-          <text class="arrow">›</text>
-        </view>
-
-        <view class="menu-item" @click="goToOrders">
-          <text class="icon">📦</text>
-          <text class="text">订单管理</text>
-          <text class="arrow">›</text>
-        </view>
-
-        <view class="menu-item" @click="goToAddGoods">
-          <text class="icon">🛍</text>
-          <text class="text">添加团购商品</text>
-          <text class="arrow">›</text>
-        </view>
-
-        <view class="menu-item" @click="goToPromo">
+        <view class="menu-item" @click="goToPromoList">
           <text class="icon">🧧</text>
-          <text class="text">新增优惠卷</text>
+          <text class="text">优惠券列表</text>
           <text class="arrow">›</text>
-        </view> 
-         <view class="menu-item" @click="goToPromoList">
-          <text class="icon">🧧</text>
-          <text class="text">优惠卷列表</text>
-          <text class="arrow">›</text>
-        </view> 
+        </view>
       </template>
     </view>
 
@@ -76,6 +59,27 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { getShopApplyStatus } from '@/api/shop.js'
+
+// 常用功能宫格：只放最高频的 4 项，action 对应下方跳转方法
+const QUICK_ITEMS = [
+  // 「团购商品」进入列表页，发布入口在列表页右上角
+  { icon: '🛍', text: '团购商品', action: 'goodsList' },
+  { icon: '📦', text: '订单管理', action: 'orders' },
+  { icon: '🎫', text: '核销中心', action: 'tickets' },
+  { icon: '🧧', text: '发布优惠券', action: 'promo' }
+]
+
+function onQuick(item) {
+  const map = {
+    goods: goToAddGoods,
+    goodsList: goToGoodsList,
+    orders: goToOrders,
+    tickets: goToTickets,
+    promo: goToPromo
+  }
+  const fn = map[item.action]
+  if (fn) fn()
+}
 
 const applyStatusData = ref(null)
 const shopId = ref(null)
@@ -190,6 +194,11 @@ function goToAddGoods() {
   uni.navigateTo({ url: `/pages/shop/goods/add${query}` })
 }
 
+function goToGoodsList() {
+  const query = shopId.value ? `?shop_id=${shopId.value}` : ''
+  uni.navigateTo({ url: `/pages/shop/goods/list${query}` })
+}
+
 function goToPromo() {
   const query = shopId.value ? `?shop_id=${shopId.value}` : ''
   uni.navigateTo({ url: `/pages/shop/promo/promo${query}` })
@@ -257,10 +266,58 @@ function goToPromoList() {
   }
 }
 
+/* 分组标题：宫格与列表共用 */
+.section-title {
+  display: block;
+  font-size: 30rpx;
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 8rpx;
+}
+
+/* ===== 常用功能宫格（4 列，超出自动换行） ===== */
+.quick-card {
+  background: #fff;
+  border-radius: 24rpx;
+  padding: 28rpx 24rpx 12rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.03);
+  margin-bottom: 24rpx;
+
+  .quick-grid {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .quick-item {
+    width: 25%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 18rpx 0 20rpx;
+  }
+
+  .quick-icon {
+    width: 96rpx;
+    height: 96rpx;
+    line-height: 96rpx;
+    text-align: center;
+    font-size: 40rpx;
+    background: #f1f5f9;
+    border-radius: 20rpx;
+    margin-bottom: 14rpx;
+  }
+
+  .quick-text {
+    font-size: 24rpx;
+    font-weight: 600;
+    color: #1e293b;
+  }
+}
+
 .menu-card {
   background: #fff;
   border-radius: 24rpx;
-  padding: 0 24rpx;
+  padding: 28rpx 24rpx 4rpx;
   box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.03);
   margin-bottom: 40rpx;
 

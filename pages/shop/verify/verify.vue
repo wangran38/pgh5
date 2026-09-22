@@ -91,13 +91,13 @@ import { takeLastErrorBody, pickErrMsg } from '@/utils/request.js'
 import { parseOrderQR } from '@/utils/orderQR.js'
 import { Html5Qrcode } from '@/utils/html5QrcodeLib.js'
 import { usePageList } from '@/utils/usePageList.js'
+import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 import AutoScroll from '@/components/auto-scroll/auto-scroll.vue'
 
 const shopId = ref(null)
 const code = ref('')
 // 最近一次扫码解析结果（动态码带 timestamp/sign，输入框只回填订单号，签名暂存此处）
 const lastScan = ref(null)
-const submitting = ref(false)
 // 核销结果：{ ok, title, amount, msg }
 const result = ref(null)
 const scrollRef = ref(null)
@@ -125,19 +125,11 @@ onLoad((query) => {
   refresh()
 })
 
-// 执行订单核销
-async function doVerify() {
-  const val = code.value.trim()
-  if (!val) {
-    uni.showToast({ title: '请输入订单号', icon: 'none' })
-    return
-  }
-  if (submitting.value) return
-  submitting.value = true
+// 执行订单核销（真正调用接口，由 useSubmit 加锁防重复）
+async function runVerifyOrder(val) {
   result.value = null
 
   const res = await verifyOrder(buildOrderParams(val))
-  submitting.value = false
 
   if (res && res.data) {
     result.value = buildOrderResult(res.data, val)
@@ -152,6 +144,19 @@ async function doVerify() {
       msg: serverMsg || '核销失败，请确认订单号是否正确或是否已核销'
     }
   }
+}
+
+// 统一防重复提交：核销中忽略再次点击
+const { loading: submitting, submit: submitVerify } = useSubmit(runVerifyOrder, { cooldown: 800 })
+
+// 核销入口（按钮 / 输入框回车 / 扫码回调都经此）：校验置于锁外，失败不占用冷却
+function doVerify() {
+  const val = code.value.trim()
+  if (!val) {
+    uni.showToast({ title: '请输入订单号', icon: 'none' })
+    return
+  }
+  submitVerify(val)
 }
 
 // 组装订单核销参数：三个字段固定全传

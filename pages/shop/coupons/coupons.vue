@@ -111,7 +111,7 @@
         </view>
         <text class="pay-saved">{{ pickedCoupon ? `已选优惠券 · 已优惠${savedAmount}元` : '已优惠0元' }}</text>
       </view>
-      <button class="pay-btn" @click="onPay">立即支付</button>
+      <button class="pay-btn" :disabled="submitting" @click="onPay">立即支付</button>
     </view>
 
     <!-- 选择票根弹层 -->
@@ -161,6 +161,7 @@ import { getUserTicketList } from '@/api/user.js'
 import { createOrder } from '@/api/order.js'
 import { usePageList } from '@/utils/usePageList.js'
 import AutoScroll from '@/components/auto-scroll/auto-scroll.vue'
+import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 
 const CAT_MAP = {
   1: '景区',
@@ -305,18 +306,9 @@ function discountOf(c) {
 const savedAmount = computed(() => discountOf(pickedCoupon.value))
 // 实付 = 总额 - 已选券优惠，最低 0
 const payAmount = computed(() => Math.max(0, money(totalMoney.value - savedAmount.value)))
-// 下单中标志，防重复提交
-const submitting = ref(false)
 
 // 创建订单 → 跳转收银台（在线支付 / 到店付现在收银台选择）
-async function onPay() {
-  if (totalMoney.value <= 0) {
-    uni.showToast({ title: '请先输入消费金额', icon: 'none' })
-    return
-  }
-  if (submitting.value) return
-  submitting.value = true
-
+async function createPayOrder() {
   // ticket_id/coupon_id 均非必选：不选券、不选票根也能按原价购买
   // pay_type 不在这里传：支付方式由收银台选定后回传后端
   const params = {
@@ -329,10 +321,8 @@ async function onPay() {
   if (pickedTicketId.value != null) params.ticket_id = Number(pickedTicketId.value)
 
   const res = await createOrder(params)
-  if (!res) {
-    submitting.value = false
-    return // 失败已由 request.js 统一提示
-  }
+  if (!res) return // 失败已由 request.js 统一提示
+
   // 后端返回 { coupon, order, ticket }，订单主体在 data.order 里；同时兼容订单字段直接平铺的情况
   const data = res.data || {}
   const order = data.order || data
@@ -340,7 +330,6 @@ async function onPay() {
   const orderNo = order.order_no || order.orderNo || ''
 
   if (!orderId) {
-    submitting.value = false
     uni.showToast({ title: '订单创建异常，请重试', icon: 'none' })
     return
   }
@@ -355,6 +344,18 @@ async function onPay() {
       '&discount=' + savedAmount.value +
       '&shop_name=' + encodeURIComponent(shopName.value || '')
   })
+}
+
+// 统一防重复提交：submitting 绑定到按钮 :disabled
+const { loading: submitting, submit: doPay } = useSubmit(createPayOrder, { cooldown: 1000 })
+
+// 立即支付入口：校验置于锁外，失败不占用冷却
+function onPay() {
+  if (totalMoney.value <= 0) {
+    uni.showToast({ title: '请先输入消费金额', icon: 'none' })
+    return
+  }
+  doPay()
 }
 
 function safeDecode(s) {

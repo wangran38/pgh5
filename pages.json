@@ -117,9 +117,33 @@
 	  }
 	},
 	{
+	  "path": "pages/shop/goods/list",
+	  "style": {
+	    "navigationBarTitleText": "团购商品",
+	    "navigationBarBackgroundColor": "#1e3a8a",
+	    "navigationBarTextStyle": "white"
+	  }
+	},
+	{
+	  "path": "pages/shop/goods/detail",
+	  "style": {
+	    "navigationBarTitleText": "商品详情",
+	    "navigationBarBackgroundColor": "#1e3a8a",
+	    "navigationBarTextStyle": "white"
+	  }
+	},
+	{
 	  "path": "pages/shop/detail/detail",
 	  "style": {
 	    "navigationBarTitleText": "详情",
+	    "navigationBarBackgroundColor": "#1e3a8a",
+	    "navigationBarTextStyle": "white"
+	  }
+	},
+	{
+	  "path": "pages/shop/shoplist/shoplist",
+	  "style": {
+	    "navigationBarTitleText": "好店列表",
 	    "navigationBarBackgroundColor": "#1e3a8a",
 	    "navigationBarTextStyle": "white"
 	  }
@@ -131,8 +155,8 @@
 			  "navigationBarBackgroundColor": "#1e3a8a",
 			  "navigationBarTextStyle": "white"
 			}
-			},
-	{
+		},
+		{
 	  "path": "pages/shop/coupons/coupons",
 			"style": {
 				"navigationBarTitleText": "订单支付",

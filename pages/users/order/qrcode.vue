@@ -38,6 +38,7 @@ import { ref, computed, onUnmounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { getOrderQRCode } from '@/api/order.js'
 import { generateOrderQRToken } from '@/utils/orderQR.js'
+import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 
 // 二维码有效期（秒）：与后端签发有效期保持一致，到点自动换新码
 const TTL = 30
@@ -47,7 +48,6 @@ const shopName = ref('')
 const payAmount = ref(0)
 
 const qrUrl = ref('')
-const qrLoading = ref(false)
 const qrError = ref('')
 const seconds = ref(TTL)
 // true 表示本张码由前端本地出签（后端接口不可用时兜底）
@@ -77,14 +77,9 @@ function safeDecode(s) {
   }
 }
 
-// 生成（或刷新）一张二维码
-async function reload() {
-  if (!orderNo.value) {
-    uni.showToast({ title: '订单信息缺失，请返回重试', icon: 'none' })
-    return
-  }
+// 生成（或刷新）一张二维码的真正实现：由 useSubmit 统一加锁防重复
+async function doReload() {
   stopCountdown()
-  qrLoading.value = true
   qrError.value = ''
   try {
     const content = await fetchQrContent()
@@ -94,9 +89,20 @@ async function reload() {
     qrError.value = (e && e.message) || '生成失败'
     console.error('[qrcode] 生成失败：', e)
   } finally {
-    qrLoading.value = false
     startCountdown()
   }
+}
+
+// 统一防重复提交：qrLoading 绑定到按钮 :disabled
+const { loading: qrLoading, submit: doRefresh } = useSubmit(doReload, { cooldown: 500 })
+
+// 生成（或刷新）入口：校验置于锁外
+function reload() {
+  if (!orderNo.value) {
+    uni.showToast({ title: '订单信息缺失，请返回重试', icon: 'none' })
+    return
+  }
+  doRefresh()
 }
 
 // 是否由后端出签。后端接口 POST /user/order/qrcode 尚未实现，
