@@ -643,13 +643,18 @@
 			}
 			loadingCities.value = false
 		} else {
-			confirmLocation(targetName, targetId)
+			// 第三级（区/县）：展示用区县名，但 city_id 必须是「城市级」 id；
+			// 若把区县 id 当作 city_id 去筛商家，将匹配不到任何商家导致列表为空
+			const cid = selectedCity.value ? (selectedCity.value.Id ?? selectedCity.value.id) : targetId
+			confirmLocation(targetName, cid)
 		}
 	}
 
-	function confirmLocation(cityName) {
+	function confirmLocation(cityName, cityId) {
 		currentLocation.value = cityName
 		uni.setStorageSync('city_name', cityName)
+		// ⚠️ /api/shops 的 city_id 为必传：选城市时把地区 id 一并缓存，供列表/筛选页使用
+		if (cityId != null && cityId !== '') uni.setStorageSync('city_id', cityId)
 		closeCityPicker()
 		uni.showToast({
 			title: `已定位: ${cityName}`,
@@ -667,10 +672,11 @@
 			.trim()
 	}
 
-	// 将定位/选择的区域写入状态并缓存（区/县、市、省各级通用）
-	function applyRegion(name) {
+	// 写入定位结果：name 用于展示（可精确到区/县），cityId 必须是「城市级」 id，供 /api/shops 的 city_id 筛选
+	function applyRegion(name, cityId) {
 		currentLocation.value = name
 		uni.setStorageSync('city_name', name)
+		if (cityId != null && cityId !== '') uni.setStorageSync('city_id', cityId)
 	}
 
 	// 会话内自动 GPS 定位只执行一次（进入页面 onMounted 或登录成功都会调到这里，
@@ -714,8 +720,9 @@
 					normalizeRegionName(c.shortname) === normalizeRegionName(matchCityName)
 				)
 				if (!city) {
-					// 市级匹配不上，退回省级
-					applyRegion(provinceName, provinceId)
+					// 市级匹配不上退回省级展示；但不要把「省 id」当作 city_id 写入，
+					// 否则列表会按错误的 city_id 筛选导致结果为空
+					applyRegion(provinceName, 0)
 					if (showTip) uni.showToast({ title: `已定位: ${provinceName}`, icon: 'none' })
 					return
 				}
@@ -735,7 +742,7 @@
 			)
 
 			if (district) {
-				applyRegion(getRegionName(district), district.Id ?? district.id)
+				applyRegion(getRegionName(district), cityId)
 				if (showTip) uni.showToast({ title: `已定位: ${getRegionName(district)}`, icon: 'none' })
 			} else {
 				applyRegion(cityName, cityId)
@@ -795,10 +802,28 @@
 	let positionPromise = null
 	function ensureUserPosition(force = false) {
 		if (userPosition.value) return Promise.resolve(userPosition.value)
+		// 复用其它页面缓存的定位（storage），避免重复向系统申请定位
+		if (!force) {
+			try {
+				const cached = uni.getStorageSync('user_position')
+				if (cached && cached.longitude != null && cached.latitude != null) {
+					userPosition.value = cached
+					return Promise.resolve(cached)
+				}
+			} catch (e) {
+				console.warn('读取缓存定位失败:', e)
+			}
+		}
 		if (positionPromise && !force) return positionPromise
 		positionPromise = getGpsPosition()
 			.then((pos) => {
 				userPosition.value = pos
+				// 缓存定位供列表/筛选页复用
+				try {
+					uni.setStorageSync('user_position', pos)
+				} catch (e) {
+					console.warn('缓存定位失败:', e)
+				}
 				return pos
 			})
 			.catch((e) => {

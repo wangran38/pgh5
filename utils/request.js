@@ -15,9 +15,9 @@
 //   const { data } = res       // 成功取数据
 
 // 所有接口（含 uni.uploadFile 上传）的统一后端地址，改这一处即可全局切换
-export const baseURL = 'http://192.168.0.114:8081/api'
+// export const baseURL = 'http://192.168.0.114:8081/api'
 // export const baseURL = 'https://wx.chenpecloud.com/api'
-// export const baseURL = 'https://api.chenpecloud.com/api'
+export const baseURL = 'https://api.chenpecloud.com/api'
 // export const baseURL = 'http://localhost:8081/api'
 
 // 核心请求方法：options 兼容 { url, method, data, header, silent, ... }
