@@ -168,7 +168,9 @@ const cells = computed(() => {
       price: info.price,
       disabled,
       subText,
-      selected: dateStr === String(props.modelValue || '').slice(0, 10),
+      // 高亮：单选模式用 modelValue；区间模式只由 start(入住)/end(离店) 决定。
+      // 若区间模式也用 modelValue，会出现「默认日期」与「入住日」两个格子同时高亮
+      selected: props.mode !== 'range' && dateStr === String(props.modelValue || '').slice(0, 10),
       start: isStart,
       end: isEnd,
       inRange

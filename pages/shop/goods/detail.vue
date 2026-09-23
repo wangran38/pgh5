@@ -86,7 +86,7 @@
             <text class="group-name">{{ g.name }}</text>
             <view v-for="(it, i) in g.list" :key="i" class="item-row">
               <text class="item-name">{{ it.item_name }}</text>
-              <text class="item-qty">x{{ it.quantity }}{{ it.unit || '' }}</text>
+              <text class="item-qty">{{ it.quantity }}{{ it.unit || '' }}</text>
             </view>
           </view>
         </view>
@@ -628,7 +628,12 @@ async function loadDetail() {
     selectedSkuIndex.value = idx > -1 ? idx : 0
   }
   // 需要选日期时，默认选中一个可售日期（今天优先）
-  if (showCalendar.value) selectedDate.value = pickDefaultDate()
+  // 区间（住宿）模式：默认「今天入住」，用户再点一天即作为离店日。
+  //   此时不能再给 selectedDate 赋值，否则日历会同时高亮「默认日期」和「入住日」两个格子
+  if (showCalendar.value) {
+    if (calendarMode.value === 'range') range.value.checkin = pickDefaultDate()
+    else selectedDate.value = pickDefaultDate()
+  }
   if (product.value && product.value.title) {
     uni.setNavigationBarTitle({ title: product.value.title })
   }
