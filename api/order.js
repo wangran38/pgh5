@@ -24,14 +24,17 @@ export function payTypeText(v) {
 }
 
 /**
- * 创建订单（优惠买单下单）
+ * 创建订单（优惠买单 / 团购商品下单共用）
  * @param {Object} data
- * @param {number} data.shop_id - 所属商家id
- * @param {number} data.ticket_id - 会员自己的票根id
- * @param {string|number} data.coupon_id - 所属优惠券的id
- * @param {number} data.amount - 优惠订单支付金额
- * @param {number} [data.discount_amount] - 前端计算的优惠金额
- * @param {number} [data.payable_amount] - 前端计算的实付金额
+ * @param {number} data.shop_id - 所属商家id（必传）
+ * @param {number} [data.ticket_id] - 会员自己的票根id（优惠买单必传；团购流程无票根，不传）
+ * @param {string|number} data.coupon_id - 所属优惠券的id；不使用优惠券时必须传 0
+ * @param {string} [data.product_id] - 所选团购商品id
+ * @param {string} [data.product_name] - 所选商品/套餐名称
+ * @param {number} data.amount - 优惠订单支付金额（不使用券时 = 实付金额）
+ * @param {number} data.discount_amount - 前端计算的优惠金额（不使用券时必须传 0，接口按全额支付落库）
+ * @param {number} data.payable_amount - 前端计算的实付金额
+ * @param {number} [data.pay_type] - 1在线支付 2当面核销付（可选，收银台内再更新）
  */
 export function createOrder(data = {}) {
   const token = uni.getStorageSync('pgtoken') || ''

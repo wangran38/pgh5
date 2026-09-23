@@ -480,6 +480,40 @@ function goShop() {
   })
 }
 
+// ===== 收银台商品快照（纯展示用）=====
+// 下单成功后把商品信息暂存到 storage，支付页读取展示明细，支付完成后清除。
+// ⚠️ 仅用于展示：实付金额始终以订单返回金额为准，不因快照改变。
+// ⚠️ key 需与 pages/users/pay/pay.vue 保持一致。
+const PAY_SNAPSHOT_KEY = 'pay_snapshot'
+function buildPaySnapshot(orderNo) {
+  const p = product.value || {}
+  const sku = selectedSku.value
+  const originalTotal = Number((currentOriginal.value * quantity.value).toFixed(2))
+  const tags = []
+  if (validText.value) tags.push(validText.value)
+  tags.push(refundText((rule.value || {}).refund_rule))
+  const dateText =
+    calendarMode.value === 'range'
+      ? `${range.value.checkin} 至 ${range.value.checkout}（${range.value.nights}晚）`
+      : selectedDate.value || ''
+  return {
+    order_no: orderNo || '',
+    shop_name: (shop.value && shop.value.name) || '',
+    goods_title: p.title || '',
+    goods_cover: covers.value[0] || p.cover_image || '',
+    sku_name: sku ? sku.sku_name || '' : '',
+    date_text: dateText,
+    tags: tags.filter(Boolean),
+    unit_price: Number(displayPrice.value.toFixed(2)),
+    original_price: Number(currentOriginal.value.toFixed(2)),
+    quantity: quantity.value,
+    // 参考价小计与团购优惠（原价 - 团购价）× 数量，仅展示
+    original_total: originalTotal,
+    group_discount: Number(Math.max(0, originalTotal - payable.value).toFixed(2)),
+    payable: Number(payable.value.toFixed(2))
+  }
+}
+
 // 下单实现（不含锁），由 useSubmit 包装成对外的 buy → onBuy
 async function buyImpl() {
   const p = product.value || {}
@@ -494,23 +528,29 @@ async function buyImpl() {
     success: async (r) => {
       if (!r.confirm) return
       uni.showLoading({ title: '下单中...', mask: true })
-      // ⚠️ 团购商品下单字段（goods_id / sku_id / quantity）需与后端确认；
-      //    当前按通用结构提交，若后端字段不同，只改这里即可。
-      const res = await createOrder({
+      // ⚠️ 后端约定：团购流程不使用优惠券时，必须 coupon_id=0 且 discount_amount=0，
+      //    接口即按「无优惠全额支付」落库；故 amount 与 payable_amount 均取实付金额。
+      //    （参考价与团购差价的展示只在收银台做前端展示，不计入订单优惠字段）
+      const productName = [p.title || '', sku ? sku.sku_name || '' : ''].filter(Boolean).join(' ')
+      const payload = {
         shop_id: Number(p.shop_id),
-        goods_id: Number(p.id),
-        sku_id: sku ? Number(sku.id) : 0,
-        // ⚠️ 日历/动态库存商品需带使用日期；字段名（use_date）需与后端确认
-        use_date: selectedDate.value || '',
-        // ⚠️ 区间（住宿）字段，待后端适配；后端忽略未识别字段不致错
-        checkin: range.value.checkin || '',
-        checkout: range.value.checkout || '',
-        nights: range.value.nights || 0,
-        quantity: quantity.value,
+        coupon_id: 0,
+        product_id: String(p.id || ''),
+        product_name: productName,
         amount: payable.value,
         discount_amount: 0,
-        payable_amount: payable.value
-      })
+        payable_amount: payable.value,
+        // ⚠️ 以下文档未定义，但团购下单必需（规格 / 数量），暂一并透传；待后端补进文档
+        sku_id: sku ? Number(sku.id) : 0,
+        quantity: quantity.value
+      }
+      // 日期类字段：仅在实际选择时才传（日历商品的使用日期 / 住宿的入住-离店区间），
+      // 未选则不传，避免空串进入后端触发校验
+      if (selectedDate.value) payload.use_date = selectedDate.value
+      if (range.value.checkin) payload.checkin = range.value.checkin
+      if (range.value.checkout) payload.checkout = range.value.checkout
+      if (Number(range.value.nights) > 0) payload.nights = Number(range.value.nights)
+      const res = await createOrder(payload)
       uni.hideLoading()
       if (!res) return // 失败已由 request.js 统一提示
       const data = res.data || {}
@@ -520,6 +560,12 @@ async function buyImpl() {
       if (!oid) {
         uni.showToast({ title: '下单失败，请重试', icon: 'none' })
         return
+      }
+      // 暂存商品快照供收银台展示明细（失败不影响支付链路）
+      try {
+        uni.setStorageSync(PAY_SNAPSHOT_KEY, buildPaySnapshot(ono))
+      } catch (e) {
+        console.warn('写入支付快照失败:', e)
       }
       uni.redirectTo({
         url:
