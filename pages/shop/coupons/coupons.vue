@@ -114,15 +114,9 @@
       <button class="pay-btn" :disabled="submitting" @click="onPay">立即支付</button>
     </view>
 
-    <!-- 选择票根弹层 -->
-    <view v-if="ticketSheet.visible" class="sheet-mask" @click="closeTicketSheet">
-      <view class="sheet" @click.stop>
-        <view class="sheet-head">
-          <text class="sheet-title">选择票根</text>
-          <text class="sheet-close" @click="closeTicketSheet">✕</text>
-        </view>
-
-        <scroll-view class="sheet-body" scroll-y>
+    <!-- 选择票根弹层（容器复用通用 sheet-popup） -->
+    <sheet-popup :visible="ticketSheet.visible" title="选择票根" @close="closeTicketSheet">
+      <scroll-view class="sheet-body" scroll-y>
           <view v-if="ticketSheet.loading" class="state-text">加载中...</view>
 
           <template v-else-if="ticketList.length > 0">
@@ -154,9 +148,8 @@
             </button>
             <text class="tk-empty-tip">拍照或相册选图，识别通过后可在此选择使用</text>
           </view>
-        </scroll-view>
-      </view>
-    </view>
+      </scroll-view>
+    </sheet-popup>
   </view>
 </template>
 
@@ -168,6 +161,7 @@ import { getUserTicketList } from '@/api/user.js'
 import { createOrder } from '@/api/order.js'
 import { usePageList } from '@/utils/usePageList.js'
 import AutoScroll from '@/components/auto-scroll/auto-scroll.vue'
+import SheetPopup from '@/components/sheet-popup/sheet-popup.vue'
 import { uploadAndVerifyTicket } from '@/api/ticket.js'
 import { compressImage } from '@/utils/compressImage.js'
 import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
@@ -713,54 +707,13 @@ function foldText(v) {
 }
 
 /* ===== 选择票根底部弹层 ===== */
-.sheet-mask {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  background: rgba(15, 23, 42, 0.5);
-  z-index: 999;
-  display: flex;
-  align-items: flex-end;
+/* 弹层容器已统一为 components/sheet-popup，此处仅保留弹层内部列表样式 */
+.sheet-body {
+  height: 60vh;
+  box-sizing: border-box;
+  padding: 0 4rpx 20rpx;
 
-  .sheet {
-    width: 100%;
-    max-height: 72vh;
-    background: #fff;
-    border-radius: 28rpx 28rpx 0 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-
-    .sheet-head {
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 30rpx 32rpx 20rpx;
-
-      .sheet-title {
-        font-size: 32rpx;
-        font-weight: 800;
-        color: #0f172a;
-      }
-
-      .sheet-close {
-        font-size: 30rpx;
-        color: #94a3b8;
-        padding: 4rpx 8rpx;
-      }
-    }
-
-    .sheet-body {
-      height: 60vh;
-      box-sizing: border-box;
-      padding: 0 28rpx 40rpx;
-
-    }
-
-    .sheet-item {
+  .sheet-item {
       display: flex;
       align-items: center;
       background: #fff;
@@ -809,7 +762,6 @@ function foldText(v) {
         }
       }
     }
-  }
 }
 
 /* ===== 票据式券卡 ===== */

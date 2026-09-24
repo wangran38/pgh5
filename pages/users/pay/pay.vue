@@ -38,6 +38,10 @@
         <text class="d-label">团购优惠</text>
         <text class="d-value cut">-¥{{ money(snapshot.group_discount) }}</text>
       </view>
+      <view v-if="snapshot.ticket_cut > 0" class="d-row">
+        <text class="d-label">票根优惠</text>
+        <text class="d-value cut">-¥{{ money(snapshot.ticket_cut) }}</text>
+      </view>
       <view class="d-row">
         <text class="d-label">优惠券</text>
         <text class="d-value muted">暂无可用</text>
@@ -144,10 +148,18 @@ function clearSnapshot() {
   }
 }
 
+// 快照有效期：超过该时长视为过期残留（异常退出未清除时兜底）
+const SNAPSHOT_TTL = 30 * 60 * 1000
+
 function readSnapshot(orderNo) {
   try {
     const s = uni.getStorageSync(PAY_SNAPSHOT_KEY)
     if (!s || typeof s !== 'object') return null
+    // 过期：直接丢弃，避免很久以前的快照被翻出来串单
+    if (s.created_at && Date.now() - Number(s.created_at) > SNAPSHOT_TTL) {
+      clearSnapshot()
+      return null
+    }
     // 快照必须属于当前订单，否则视为上一笔的残留（避免串单显示别人的商品）
     if (orderNo && s.order_no && String(s.order_no) !== String(orderNo)) {
       clearSnapshot()

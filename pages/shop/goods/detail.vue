@@ -130,46 +130,39 @@
     </scroll-view>
 
     <!-- 日历弹层（一行摘要点击唤起，可选范围限制在今天起 30 天内） -->
-    <view v-if="showCalPopup" class="cal-mask" @click="closeCal">
-      <view class="cal-sheet" @click.stop>
-        <view class="cal-sheet-head">
-          <text class="cal-sheet-title">{{ calendarMode === 'range' ? '选择入住 / 离店日期' : '选择使用日期' }}</text>
-          <text class="cal-sheet-close" @click="closeCal">✕</text>
-        </view>
-        <goods-calendar
-          v-model="selectedDate"
-          :mode="calendarMode"
-          :calendar="calendarData"
-          :sku-id="selectedSku ? Number(selectedSku.id || 0) : 0"
-          :fallback-price="basePrice"
-          :fallback-stock="baseStock"
-          :min-date="todayStr"
-          :max-date="maxDateStr"
-          :start="range.checkin"
-          :end="range.checkout"
-          @change="onCalChange"
-        />
-        <view class="cal-sheet-foot">
-          <button class="cal-confirm" :disabled="!calConfirmable" @click="confirmCal">
-            {{ calendarMode === 'range' && rangeDetail ? `确认 ${rangeDetail.count} 晚 · ¥${money(rangeDetail.total)}` : '确认' }}
-          </button>
-        </view>
-      </view>
-    </view>
+    <sheet-popup
+      :visible="showCalPopup"
+      :title="calendarMode === 'range' ? '选择入住 / 离店日期' : '选择使用日期'"
+      @close="closeCal"
+    >
+      <goods-calendar
+        v-model="selectedDate"
+        :mode="calendarMode"
+        :calendar="calendarData"
+        :sku-id="selectedSku ? Number(selectedSku.id || 0) : 0"
+        :fallback-price="basePrice"
+        :fallback-stock="baseStock"
+        :min-date="todayStr"
+        :max-date="maxDateStr"
+        :start="range.checkin"
+        :end="range.checkout"
+        @change="onCalChange"
+      />
+      <template #foot>
+        <button class="cal-confirm" :disabled="!calConfirmable" @click="confirmCal">
+          {{ calendarMode === 'range' && rangeDetail ? `确认 ${rangeDetail.count} 晚 · ¥${money(rangeDetail.total)}` : '确认' }}
+        </button>
+      </template>
+    </sheet-popup>
 
     <!-- 票根选择弹层：列出我的票根，按票种/目的地/时效校验 -->
-    <view v-if="showTicketPopup" class="cal-mask" @click="showTicketPopup = false">
-      <view class="cal-sheet" @click.stop>
-        <view class="cal-sheet-head">
-          <text class="cal-sheet-title">选择票根</text>
-          <text class="cal-sheet-close" @click="showTicketPopup = false">✕</text>
-        </view>
-        <scroll-view scroll-y class="tk-scroll">
-          <view v-if="ticketLoading" class="tk-state">票根加载中...</view>
-          <view v-else-if="!myTickets.length" class="tk-state">暂无票根，去首页上传识别一张吧</view>
+    <sheet-popup :visible="showTicketPopup" title="选择票根" @close="showTicketPopup = false">
+      <scroll-view scroll-y class="tk-scroll">
+        <view v-if="ticketLoading" class="tk-state">票根加载中...</view>
+        <view v-else-if="!myTickets.length" class="tk-state">暂无票根，去首页上传识别一张吧</view>
+        <template v-else>
           <view
             v-for="t in myTickets"
-            v-else
             :key="t.id"
             class="tk-item"
             :class="{ dis: !ticketCheck(t).ok }"
@@ -185,12 +178,12 @@
             </view>
             <text v-if="selectedTicket && selectedTicket.id === t.id" class="tk-ok">✓</text>
           </view>
-        </scroll-view>
-        <view v-if="selectedTicket" class="cal-sheet-foot">
-          <button class="cal-confirm" @click="clearTicket">不使用票根</button>
-        </view>
-      </view>
-    </view>
+        </template>
+      </scroll-view>
+      <template #foot>
+        <button v-if="selectedTicket" class="cal-confirm" @click="clearTicket">不使用票根</button>
+      </template>
+    </sheet-popup>
 
     <!-- 底部购买栏 -->
     <view v-if="product" class="buy-bar">
@@ -217,6 +210,7 @@ import { createOrder } from '@/api/order.js'
 import { getUserTicketList } from '@/api/user.js'
 import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 import GoodsCalendar from '@/components/goods-calendar/goods-calendar.vue'
+import SheetPopup from '@/components/sheet-popup/sheet-popup.vue'
 
 const goodsId = ref(null)
 const loading = ref(true)
@@ -675,7 +669,15 @@ function buildPaySnapshot(orderNo) {
     // 参考价小计与团购优惠（原价 - 团购价）× 数量，仅展示
     original_total: originalTotal,
     group_discount: Number(Math.max(0, originalTotal - payable.value).toFixed(2)),
-    payable: Number(payable.value.toFixed(2))
+    // 实付（已减票根优惠），与传给收银台的 amount 保持一致
+    payable: Number(finalPayable.value.toFixed(2)),
+    // 票根联运减免：让收银台明细与实付金额对得上
+    ticket_cut: Number(ticketCut.value.toFixed(2)),
+    ticket_title: selectedTicket.value
+      ? selectedTicket.value.title || selectedTicket.value.ticket_sn || '票根'
+      : '',
+    // 快照创建时间：支付页据此判断过期，避免异常退出后残留的旧快照被误用
+    created_at: Date.now()
   }
 }
 
@@ -953,67 +955,24 @@ onLoad((query) => {
   }
 }
 
-/* 日历底部弹层 */
-.cal-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 999;
-  display: flex;
-  align-items: flex-end;
-}
-
-.cal-sheet {
+/* 弹层容器已统一为 components/sheet-popup，此处仅保留弹层内按钮样式 */
+.cal-confirm {
   width: 100%;
-  box-sizing: border-box;
-  max-height: 84vh;
-  display: flex;
-  flex-direction: column;
-  background: #fff;
-  border-radius: 28rpx 28rpx 0 0;
-  padding: 24rpx 24rpx calc(24rpx + env(safe-area-inset-bottom));
+  height: 88rpx;
+  line-height: 88rpx;
+  border-radius: 999rpx;
+  background: #2563eb;
+  color: #fff;
+  font-size: 30rpx;
+  font-weight: 800;
+  border: none;
 
-  .cal-sheet-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: 16rpx;
-  }
-
-  .cal-sheet-title {
-    font-size: 30rpx;
-    font-weight: 800;
-    color: #0f172a;
-  }
-
-  .cal-sheet-close {
-    font-size: 32rpx;
-    color: #94a3b8;
-    padding: 0 8rpx;
-  }
-
-  .cal-sheet-foot {
-    padding-top: 16rpx;
-  }
-
-  .cal-confirm {
-    width: 100%;
-    height: 88rpx;
-    line-height: 88rpx;
-    border-radius: 999rpx;
-    background: #2563eb;
-    color: #fff;
-    font-size: 30rpx;
-    font-weight: 800;
+  &::after {
     border: none;
+  }
 
-    &::after {
-      border: none;
-    }
-
-    &[disabled] {
-      opacity: 0.6;
-    }
+  &[disabled] {
+    opacity: 0.6;
   }
 }
 
