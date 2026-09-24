@@ -100,10 +100,17 @@
           </view>
         </view>
 
-        <!-- 票根联运优惠 -->
-        <view v-if="ticketText" class="card ticket-card">
+        <!-- ticket_discount：票根联运优惠，点击选择我的票根 -->
+        <view v-if="ticketText" class="card ticket-card" @click="openTicketPicker">
           <text class="ticket-icon">🎫</text>
-          <text class="ticket-text">{{ ticketText }}</text>
+          <view class="ticket-main">
+            <text class="ticket-text">{{ ticketText }}</text>
+            <text v-for="(line, i) in ticketDescLines" :key="i" class="ticket-line">{{ line }}</text>
+            <text v-if="selectedTicket" class="ticket-picked">
+              已选：{{ selectedTicket.title || selectedTicket.ticket_sn || '票根' }} · 减 ¥{{ money(ticketCut) }}
+            </text>
+            <text v-else class="ticket-pick">点击选择票根 ›</text>
+          </view>
         </view>
 
         <!-- 商家卡片 -->
@@ -150,14 +157,50 @@
       </view>
     </view>
 
+    <!-- 票根选择弹层：列出我的票根，按票种/目的地/时效校验 -->
+    <view v-if="showTicketPopup" class="cal-mask" @click="showTicketPopup = false">
+      <view class="cal-sheet" @click.stop>
+        <view class="cal-sheet-head">
+          <text class="cal-sheet-title">选择票根</text>
+          <text class="cal-sheet-close" @click="showTicketPopup = false">✕</text>
+        </view>
+        <scroll-view scroll-y class="tk-scroll">
+          <view v-if="ticketLoading" class="tk-state">票根加载中...</view>
+          <view v-else-if="!myTickets.length" class="tk-state">暂无票根，去首页上传识别一张吧</view>
+          <view
+            v-for="t in myTickets"
+            v-else
+            :key="t.id"
+            class="tk-item"
+            :class="{ dis: !ticketCheck(t).ok }"
+            @click="pickTicket(t)"
+          >
+            <image class="tk-img" :src="t.user_image_url || ''" mode="aspectFill" />
+            <view class="tk-main">
+              <text class="tk-title">{{ t.title || '未知票根' }}</text>
+              <text class="tk-meta">
+                {{ [t.ticket_category, dayText(t.event_date)].filter(Boolean).join(' · ') }}
+              </text>
+              <text v-if="!ticketCheck(t).ok" class="tk-bad">{{ ticketCheck(t).reason }}</text>
+            </view>
+            <text v-if="selectedTicket && selectedTicket.id === t.id" class="tk-ok">✓</text>
+          </view>
+        </scroll-view>
+        <view v-if="selectedTicket" class="cal-sheet-foot">
+          <button class="cal-confirm" @click="clearTicket">不使用票根</button>
+        </view>
+      </view>
+    </view>
+
     <!-- 底部购买栏 -->
     <view v-if="product" class="buy-bar">
       <view class="bar-price">
         <text class="bar-label">合计</text>
         <view class="bar-amount">
           <text class="bar-symbol">¥</text>
-          <text class="bar-num">{{ money(payable) }}</text>
+          <text class="bar-num">{{ money(finalPayable) }}</text>
         </view>
+        <text v-if="ticketCut > 0" class="bar-cut">票根减 ¥{{ money(ticketCut) }}</text>
       </view>
       <button class="buy-btn" :disabled="buying || soldOut" @click="onBuy">
         {{ soldOut ? '已售罄' : (buying ? '处理中...' : '立即购买') }}
@@ -171,6 +214,7 @@ import { ref, computed } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { getGoodsDetail } from '@/api/shop.js'
 import { createOrder } from '@/api/order.js'
+import { getUserTicketList } from '@/api/user.js'
 import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 import GoodsCalendar from '@/components/goods-calendar/goods-calendar.vue'
 
@@ -407,15 +451,136 @@ const limitText = computed(() => {
   return arr.join(' · ')
 })
 
+// ===== 票根联运优惠 =====
+// 商家配置字段（见 /shop/goods/detail 的 ticket_discount）：
+//   is_enabled             是否开启（0 关闭时不展示任何票根优惠）
+//   allow_ticket_categories 支持票种，逗号分隔，如「火车票,飞机票」
+//   match_destination_city  限定到达城市，如「海南」
+//   discount_type           1=立减(元) 2=折扣率(0.85=85折)
+//   discount_value          立减金额或折扣率
+//   ticket_valid_days       票根时效（天）：行程日起 N 天内有效
+const ticketOn = computed(() => Number((ticketDiscount.value || {}).is_enabled) === 1)
+
 const ticketText = computed(() => {
   const t = ticketDiscount.value
-  if (!t) return ''
+  if (!ticketOn.value) return ''
   const cats = t.allow_ticket_categories ? `（${t.allow_ticket_categories}）` : ''
-  if (Number(t.discount_type) === 2) {
-    return `凭票根享${cats}${Number(t.discount_value) * 10} 折优惠`
-  }
-  return `凭票根享${cats}立减 ¥${Number(t.discount_value || 0)}`
+  const off =
+    Number(t.discount_type) === 2
+      ? `${money(Number(t.discount_value) * 10)} 折`
+      : `立减 ¥${money(t.discount_value)}`
+  // 首行只展示优惠描述；目的地与时效由 ticketDescLines 逐行展示
+  return `凭票根享${cats}${off}`
 })
+
+// 第二行起：目的地 / 票根时效（逐行展示）
+const ticketDescLines = computed(() => {
+  const t = ticketDiscount.value
+  if (!ticketOn.value) return []
+  const lines = []
+  if (t.match_destination_city) lines.push(`目的地 ${t.match_destination_city}`)
+  if (Number(t.ticket_valid_days) > 0) lines.push(`票根 ${t.ticket_valid_days} 天内有效`)
+  return lines
+})
+
+// 票根是否满足本商品的联运条件（票种 / 目的地 / 时效）
+function ticketCheck(t) {
+  const d = ticketDiscount.value || {}
+  // 1) 票种：allow_ticket_categories 逗号分隔，模糊包含即通过
+  const cats = String(d.allow_ticket_categories || '')
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (cats.length) {
+    const c = String(t.ticket_category || '').trim()
+    // ⚠️ 票种为空时必须判为不匹配：否则 x.includes('') 恒为 true，空票种会被误放行
+    if (!c || !cats.some((x) => c.includes(x) || x.includes(c))) {
+      return { ok: false, reason: c ? `仅限 ${cats.join(' / ')}` : '票种未知，无法核验' }
+    }
+  }
+  // 2) 目的地：仅当票根数据里存在目的地字段时才校验，没有该字段则不做限制
+  const dest = String(d.match_destination_city || '').trim()
+  if (dest) {
+    const td = String(
+      t.destination || t.to_city || t.arrive_city || t.end_city || t.city || ''
+    )
+    if (td && !td.includes(dest) && !dest.includes(td)) {
+      return { ok: false, reason: `需到达 ${dest}` }
+    }
+  }
+  // 3) 时效：行程日距今超过 ticket_valid_days 天则失效
+  const days = Number(d.ticket_valid_days || 0)
+  if (days > 0 && t.event_date) {
+    const at = new Date(String(t.event_date).replace(' ', 'T')).getTime()
+    if (!isNaN(at)) {
+      const diffDays = Math.floor((Date.now() - at) / 86400000)
+      if (diffDays > days) return { ok: false, reason: `超过 ${days} 天时效` }
+    }
+  }
+  return { ok: true, reason: '' }
+}
+
+const showTicketPopup = ref(false)
+const myTickets = ref([])
+const ticketLoading = ref(false)
+const selectedTicket = ref(null)
+
+function pickList(res) {
+  if (!res) return []
+  if (Array.isArray(res)) return res
+  if (Array.isArray(res.data)) return res.data
+  if (res.data && Array.isArray(res.data.list)) return res.data.list
+  return []
+}
+
+async function openTicketPicker() {
+  if (!uni.getStorageSync('pgtoken')) {
+    uni.showToast({ title: '请先登录后再选票根', icon: 'none' })
+    return
+  }
+  showTicketPopup.value = true
+  ticketLoading.value = true
+  try {
+    const res = await getUserTicketList({ page: 1, limit: 50 })
+    myTickets.value = pickList(res)
+  } catch (e) {
+    console.error('票根列表加载异常:', e)
+    myTickets.value = []
+  } finally {
+    ticketLoading.value = false
+  }
+}
+
+function pickTicket(t) {
+  const r = ticketCheck(t)
+  if (!r.ok) {
+    uni.showToast({ title: r.reason, icon: 'none' })
+    return
+  }
+  selectedTicket.value = t
+  showTicketPopup.value = false
+}
+
+function clearTicket() {
+  selectedTicket.value = null
+  showTicketPopup.value = false
+}
+
+// 选中票根后的优惠金额（未选则为 0）
+const ticketCut = computed(() => {
+  if (!ticketOn.value || !selectedTicket.value) return 0
+  const d = ticketDiscount.value
+  const base = Number(payable.value)
+  if (Number(d.discount_type) === 2) {
+    // 折扣率：0.85 表示支付 85%，即优惠 15%
+    const rate = Number(d.discount_value || 0)
+    return Number(Math.max(0, base * (1 - rate)).toFixed(2))
+  }
+  return Number(Math.min(base, Number(d.discount_value || 0)).toFixed(2))
+})
+
+// 票根优惠后的实付金额
+const finalPayable = computed(() => Number(Math.max(0, payable.value - ticketCut.value).toFixed(2)))
 
 function dayText(s) {
   return s ? String(s).slice(0, 10) : ''
@@ -524,7 +689,7 @@ async function buyImpl() {
       calendarMode === 'range'
         ? `\n入住 ${range.value.checkin} 离店 ${range.value.checkout}（${range.value.nights}晚）`
         : selectedDate.value ? '\n日期 ' + selectedDate.value : ''
-    }\n¥${money(payable.value)} × ${quantity.value}`,
+    }\n¥${money(finalPayable.value)} × ${quantity.value}${ticketCut.value > 0 ? `（票根已减 ¥${money(ticketCut.value)}）` : ''}`,
     success: async (r) => {
       if (!r.confirm) return
       uni.showLoading({ title: '下单中...', mask: true })
@@ -535,15 +700,24 @@ async function buyImpl() {
       const payload = {
         shop_id: Number(p.shop_id),
         coupon_id: 0,
-        product_id: String(p.id || ''),
+        product_id: Number(p.id) || 0,
         product_name: productName,
         amount: payable.value,
-        discount_amount: 0,
-        payable_amount: payable.value,
+        // ⚠️ 票根联运：选中票根后把优惠计入 discount_amount。
+        //    后端尚未明确票根优惠是否计入 discount_amount，若要求仍传 0，把本行改回 0 即可
+        discount_amount: ticketCut.value,
+        payable_amount: finalPayable.value,
         // ⚠️ 以下文档未定义，但团购下单必需（规格 / 数量），暂一并透传；待后端补进文档
         sku_id: sku ? Number(sku.id) : 0,
-        quantity: quantity.value
+        // 住宿（区间）按「晚数」传：入住-离店几晚就传几，便于后端逐晚扣减每日库存。
+        // ⚠️ 注意：这里的 quantity 只作为下单数量字段，实付金额仍由 payable（逐晚价合计 × 份数）计算，不会重复乘
+        quantity:
+          calendarMode.value === 'range' && Number(range.value.nights) > 0
+            ? Number(range.value.nights)
+            : quantity.value
       }
+      // 选中票根才带 ticket_id（未选则不传，与「团购不使用票根」一致）
+      if (selectedTicket.value) payload.ticket_id = Number(selectedTicket.value.id) || 0
       // 日期类字段：仅在实际选择时才传（日历商品的使用日期 / 住宿的入住-离店区间），
       // 未选则不传，避免空串进入后端触发校验
       if (selectedDate.value) payload.use_date = selectedDate.value
@@ -571,9 +745,9 @@ async function buyImpl() {
         url:
           '/pages/users/pay/pay?order_id=' + oid +
           '&order_no=' + encodeURIComponent(ono) +
-          '&amount=' + payable.value +
+          '&amount=' + finalPayable.value +
           '&total=' + payable.value +
-          '&discount=0' +
+          '&discount=' + ticketCut.value +
           '&shop_name=' + encodeURIComponent((shop.value && shop.value.name) || '')
       })
     }
@@ -1079,13 +1253,113 @@ onLoad((query) => {
     margin-right: 14rpx;
   }
 
-  .ticket-text {
+  .ticket-main {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .ticket-text {
     font-size: 24rpx;
     color: #c2410c;
     line-height: 1.5;
   }
+
+  .ticket-line {
+    font-size: 22rpx;
+    color: #b45309;
+    line-height: 1.6;
+  }
+
+  .ticket-pick {
+    margin-top: 6rpx;
+    font-size: 22rpx;
+    color: #2563eb;
+    font-weight: 700;
+  }
+
+  .ticket-picked {
+    margin-top: 6rpx;
+    font-size: 22rpx;
+    color: #15803d;
+    font-weight: 700;
+  }
+}
+
+/* ===== 票根选择弹层 ===== */
+.tk-scroll {
+  max-height: 60vh;
+}
+
+.tk-state {
+  padding: 60rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+  color: #94a3b8;
+}
+
+.tk-item {
+  display: flex;
+  align-items: center;
+  padding: 20rpx 0;
+  border-bottom: 2rpx solid #f1f5f9;
+
+  &.dis {
+    opacity: 0.5;
+  }
+
+  .tk-img {
+    width: 100rpx;
+    height: 100rpx;
+    border-radius: 12rpx;
+    background: #e2e8f0;
+    flex-shrink: 0;
+  }
+
+  .tk-main {
+    flex: 1;
+    min-width: 0;
+    margin-left: 20rpx;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .tk-title {
+    font-size: 26rpx;
+    font-weight: 700;
+    color: #0f172a;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .tk-meta {
+    margin-top: 6rpx;
+    font-size: 22rpx;
+    color: #64748b;
+  }
+
+  .tk-bad {
+    margin-top: 6rpx;
+    font-size: 22rpx;
+    color: #b91c1c;
+  }
+
+  .tk-ok {
+    flex-shrink: 0;
+    margin-left: 16rpx;
+    font-size: 30rpx;
+    color: #2563eb;
+    font-weight: 900;
+  }
+}
+
+.bar-cut {
+  margin-left: 12rpx;
+  font-size: 22rpx;
+  color: #15803d;
+  font-weight: 700;
 }
 
 /* ===== 商家卡 ===== */

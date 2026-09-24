@@ -146,7 +146,14 @@
             </view>
           </template>
 
-          <view v-else class="state-text">暂无可用票根</view>
+          <!-- 无票根：给出识别入口，不用跳出当前买单流程 -->
+          <view v-else class="tk-empty">
+            <text class="tk-empty-text">暂无可用票根</text>
+            <button class="tk-upload-btn" :disabled="ticketUploading" @click="uploadTicket">
+              {{ ticketUploading ? '识别中...' : '📷 上传 / 识别票根' }}
+            </button>
+            <text class="tk-empty-tip">拍照或相册选图，识别通过后可在此选择使用</text>
+          </view>
         </scroll-view>
       </view>
     </view>
@@ -161,6 +168,8 @@ import { getUserTicketList } from '@/api/user.js'
 import { createOrder } from '@/api/order.js'
 import { usePageList } from '@/utils/usePageList.js'
 import AutoScroll from '@/components/auto-scroll/auto-scroll.vue'
+import { uploadAndVerifyTicket } from '@/api/ticket.js'
+import { compressImage } from '@/utils/compressImage.js'
 import { useSubmit } from '@/utils/submitGuard.js' // 统一防重复提交
 
 const CAT_MAP = {
@@ -195,24 +204,73 @@ const pickedTicket = computed(
   () => ticketList.value.find((t) => String(t.id) === String(pickedTicketId.value)) || null
 )
 
-async function openTicketPicker() {
-  if (ticketSheet.value.visible) return
-  ticketSheet.value.visible = true
-  ticketSheet.value.loading = true
+// 拉取我的票根（只保留未兑换的可用票根），供弹层与识别成功后复用
+async function fetchTicketList() {
   ticketList.value = []
   try {
     const res = await getUserTicketList({ page: 1, limit: 100 })
     const data = res && res.data
     const arr = (Array.isArray(data) ? data : data && Array.isArray(data.list) ? data.list : []) || []
-    // 只展示未兑换（可用）票根
     ticketList.value = arr.filter((t) => !(t.exchange_status > 0 || !!t.exchanged_at || t.coupon_id > 0))
     // 已选票根不在本次列表时清掉，避免回显残留
     if (pickedTicketId.value != null && !ticketList.value.some((t) => String(t.id) === String(pickedTicketId.value))) {
       pickedTicketId.value = null
     }
-  } finally {
-    ticketSheet.value.loading = false
+  } catch (e) {
+    console.error('票根列表加载异常:', e)
+    ticketList.value = []
   }
+}
+
+async function openTicketPicker() {
+  if (ticketSheet.value.visible) return
+  ticketSheet.value.visible = true
+  ticketSheet.value.loading = true
+  await fetchTicketList()
+  ticketSheet.value.loading = false
+}
+
+// 没有票根时直接调起识别：与首页同一套 uploadAndVerifyTicket，成功后刷新列表
+const ticketUploading = ref(false)
+async function uploadTicket() {
+  if (ticketUploading.value) return
+  if (!uni.getStorageSync('pgtoken')) {
+    uni.showToast({ title: '请先登录后再识别票根', icon: 'none' })
+    return
+  }
+  uni.chooseImage({
+    count: 1,
+    sizeType: ['compressed'],
+    sourceType: ['album', 'camera'],
+    fail: () => {},
+    success: async (chooseRes) => {
+      ticketUploading.value = true
+      uni.showLoading({ title: '识别中...', mask: true })
+      try {
+        const file = await compressImage(chooseRes.tempFilePaths[0])
+        const res = await uploadAndVerifyTicket(file, {})
+        const ocr = (res && res.data && res.data.ocr_result) || {}
+        if (ocr.is_valid === true) {
+          uni.showToast({ title: '票根识别成功', icon: 'success' })
+          // 重新拉取，让新票根出现在选择列表中
+          ticketSheet.value.loading = true
+          await fetchTicketList()
+        } else {
+          uni.showToast({
+            title: ocr.reject_reason || '票根核验未通过',
+            icon: 'none',
+            duration: 2500
+          })
+        }
+      } catch (e) {
+        uni.showToast({ title: (e && e.message) || '票根识别失败，请重试', icon: 'none' })
+      } finally {
+        uni.hideLoading()
+        ticketSheet.value.loading = false
+        ticketUploading.value = false
+      }
+    }
+  })
 }
 
 function chooseTicket(t) {
@@ -534,6 +592,46 @@ function foldText(v) {
   color: #94a3b8;
   font-size: 26rpx;
   padding: 120rpx 0;
+}
+
+/* 票根弹层空态：含识别入口 */
+.tk-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60rpx 0 40rpx;
+
+  .tk-empty-text {
+    font-size: 26rpx;
+    color: #94a3b8;
+  }
+
+  .tk-upload-btn {
+    margin-top: 28rpx;
+    height: 76rpx;
+    line-height: 76rpx;
+    padding: 0 40rpx;
+    border-radius: 999rpx;
+    background: linear-gradient(90deg, #2563eb, #1d4ed8);
+    color: #fff;
+    font-size: 28rpx;
+    font-weight: 800;
+    border: none;
+
+    &::after {
+      border: none;
+    }
+
+    &[disabled] {
+      background: #94a3b8;
+    }
+  }
+
+  .tk-empty-tip {
+    margin-top: 18rpx;
+    font-size: 22rpx;
+    color: #cbd5e1;
+  }
 }
 
 /* 未选票根提示条 */
